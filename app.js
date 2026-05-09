@@ -9,8 +9,9 @@ async function loadThreads() {
     const result = await db.from('Threads').select('*');
     console.log('result:', JSON.stringify(result));
     if (result.data && result.data.length > 0) {
-      document.getElementById('thread-list').innerHTML = 
-        '<p>' + result.data[0].thread_name + '</p>';
+      document.getElementById('thread-list').innerHTML ='<p>' + JSON.stringify(result.data[0]) + '</p>';
+
+        
     } else {
       document.getElementById('thread-list').innerHTML = 
         '<p>No data: ' + JSON.stringify(result) + '</p>';
