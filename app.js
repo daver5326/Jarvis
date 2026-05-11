@@ -8,6 +8,7 @@ let currentThread = null;
 let chatHistory = [];
 let systemContext = '';
 let isListening = false;
+let recognition = null;
 
 async function loadThreads() {
   try {
@@ -42,6 +43,7 @@ async function openThread(id) {
   document.getElementById('chat-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
+  document.getElementById('audio-prompt').style.display = 'block';
   
   systemContext = `You are Jarvis, a personal AI assistant helping with a project called "${currentThread['Thread name']}".
 
@@ -56,6 +58,13 @@ Notes: ${currentThread['Note']}
 The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Get straight to helping them make progress. Keep responses concise and conversational since they may be listening rather than reading.`;
 
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
+}
+
+function enableAudio() {
+  document.getElementById('audio-prompt').style.display = 'none';
+  const utterance = new SpeechSynthesisUtterance('Jarvis voice enabled.');
+  utterance.volume = 1.0;
+  window.speechSynthesis.speak(utterance);
 }
 
 function speak(text) {
@@ -134,9 +143,8 @@ function backToDashboard() {
   chatHistory = [];
 }
 
-// Voice
+// Voice input
 const micBtn = document.getElementById('mic-btn');
-let recognition = null;
 
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -155,18 +163,20 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         interim += event.results[i][0].transcript;
       }
     }
-    document.getElementById('chat-input').value = final || interim;
+    const textarea = document.getElementById('chat-input');
+    textarea.value = final || interim;
+    textarea.scrollTop = textarea.scrollHeight;
     
     if (final) {
       const transcript = final.toLowerCase().trim();
-      document.getElementById('chat-input').value = '';
+      textarea.value = '';
       if (transcript.startsWith('project ')) {
         const projectName = transcript.replace('project ', '').trim();
         switchToProject(projectName);
       } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
         alert('New thread form coming soon.');
       } else {
-        document.getElementById('chat-input').value = final.trim();
+        textarea.value = final.trim();
         sendMessage();
       }
     }
@@ -216,7 +226,10 @@ async function switchToProject(name) {
 
 document.getElementById('send-btn').addEventListener('click', sendMessage);
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter') sendMessage();
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
 });
 document.getElementById('new-thread-btn').addEventListener('click', function() {
   alert('New thread form coming soon.');
