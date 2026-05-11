@@ -7,6 +7,7 @@ const db = createClient(SUPABASE_URL, SUPABASE_KEY);
 let currentThread = null;
 let chatHistory = [];
 let systemContext = '';
+let isListening = false;
 
 async function loadThreads() {
   try {
@@ -52,9 +53,18 @@ Decisions Made: ${currentThread['Decisions made']}
 Open Questions: ${currentThread['Open question']}
 Notes: ${currentThread['Note']}
 
-The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Get straight to helping them make progress.`;
+The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Get straight to helping them make progress. Keep responses concise and conversational since they may be listening rather than reading.`;
 
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
+}
+
+function speak(text) {
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.rate = 1.05;
+  utterance.pitch = 1.0;
+  utterance.volume = 1.0;
+  window.speechSynthesis.speak(utterance);
 }
 
 function addMessage(role, text) {
@@ -65,6 +75,9 @@ function addMessage(role, text) {
   document.getElementById('chat-messages').scrollTop = 999999;
   if (role !== 'assistant' || chatHistory.length === 0) {
     chatHistory.push({ role, content: text });
+  }
+  if (role === 'assistant' && text !== '...') {
+    speak(text);
   }
 }
 
@@ -81,6 +94,7 @@ async function sendMessage() {
   thinking.className = 'message assistant thinking';
   thinking.textContent = '...';
   document.getElementById('chat-messages').appendChild(thinking);
+  document.getElementById('chat-messages').scrollTop = 999999;
   
   try {
     const response = await fetch('/api/chat', {
@@ -109,10 +123,95 @@ async function sendMessage() {
 }
 
 function backToDashboard() {
+  window.speechSynthesis.cancel();
+  if (isListening && recognition) {
+    isListening = false;
+    recognition.stop();
+  }
   document.getElementById('dashboard').style.display = 'block';
   document.getElementById('chat-view').style.display = 'none';
   currentThread = null;
   chatHistory = [];
+}
+
+// Voice
+const micBtn = document.getElementById('mic-btn');
+let recognition = null;
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = function(event) {
+    let interim = '';
+    let final = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        final += event.results[i][0].transcript;
+      } else {
+        interim += event.results[i][0].transcript;
+      }
+    }
+    document.getElementById('chat-input').value = final || interim;
+    
+    if (final) {
+      const transcript = final.toLowerCase().trim();
+      document.getElementById('chat-input').value = '';
+      if (transcript.startsWith('project ')) {
+        const projectName = transcript.replace('project ', '').trim();
+        switchToProject(projectName);
+      } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
+        alert('New thread form coming soon.');
+      } else {
+        document.getElementById('chat-input').value = final.trim();
+        sendMessage();
+      }
+    }
+  };
+
+  recognition.onerror = function() {
+    micBtn.textContent = '🎤';
+    isListening = false;
+  };
+
+  recognition.onend = function() {
+    if (isListening) {
+      setTimeout(() => { if (isListening) recognition.start(); }, 300);
+    } else {
+      micBtn.textContent = '🎤';
+    }
+  };
+
+  micBtn.addEventListener('click', function() {
+    if (isListening) {
+      isListening = false;
+      recognition.stop();
+      micBtn.textContent = '🎤';
+    } else {
+      isListening = true;
+      micBtn.textContent = '🔴';
+      recognition.start();
+    }
+  });
+
+} else {
+  micBtn.style.opacity = '0.3';
+}
+
+async function switchToProject(name) {
+  const result = await db.from('Threads').select('*');
+  if (!result.data) return;
+  const match = result.data.find(t => 
+    t['Thread name'].toLowerCase().includes(name)
+  );
+  if (match) {
+    openThread(match.id);
+  } else {
+    addMessage('assistant', `I couldn't find a project called "${name}". Check the dashboard for your project names.`);
+  }
 }
 
 document.getElementById('send-btn').addEventListener('click', sendMessage);
@@ -124,64 +223,3 @@ document.getElementById('new-thread-btn').addEventListener('click', function() {
 });
 
 loadThreads();
-
-// Voice commands
-const micBtn = document.getElementById('mic-btn');
-let recognition = null;
-
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.continuous = false;
-  recognition.interimResults = false;
-  recognition.lang = 'en-US';
-
-  recognition.onresult = function(event) {
-    const transcript = event.results[0][0].transcript.toLowerCase().trim();
-    micBtn.textContent = '🎤';
-    
-    // Check for project switching command
-    if (transcript.startsWith('project ')) {
-      const projectName = transcript.replace('project ', '').trim();
-      switchToProject(projectName);
-    } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
-      alert('New thread form coming soon.');
-    } else {
-      // Otherwise use as chat input
-      document.getElementById('chat-input').value = transcript;
-      sendMessage();
-    }
-  };
-
-  recognition.onerror = function() {
-    micBtn.textContent = '🎤';
-  };
-
-  recognition.onend = function() {
-    micBtn.textContent = '🎤';
-  };
-
-  micBtn.addEventListener('click', function() {
-    micBtn.textContent = '🔴';
-    recognition.start();
-  });
-} else {
-  micBtn.style.opacity = '0.3';
-  micBtn.title = 'Voice not supported in this browser';
-}
-
-async function switchToProject(name) {
-  const result = await db.from('Threads').select('*');
-  if (!result.data) return;
-  
-  const match = result.data.find(t => 
-    t['Thread name'].toLowerCase().includes(name)
-  );
-  
-  if (match) {
-    openThread(match.id);
-  } else {
-    addMessage('assistant', `I couldn't find a project called "${name}". Check the dashboard for your project names.`);
-  }
-}
-
