@@ -177,12 +177,15 @@ main {
   flex: 1;
   padding: 12px 16px;
   border: 1px solid #ddd;
-  border-radius: 24px;
-  font-size: 14px;
+  border-radius: 8px;
+  font-size: 16px;
   font-family: inherit;
   outline: none;
   background: #f4f2ee;
+  min-height: 80px;
+  resize: vertical;
 }
+
 
 #send-btn {
   width: 44px;
