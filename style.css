@@ -183,8 +183,11 @@ main {
   outline: none;
   background: #f4f2ee;
   min-height: 80px;
-  resize: vertical;
+  max-height: 150px;
+  overflow-y: auto;
+  resize: none;
 }
+
 
 
 #send-btn {
