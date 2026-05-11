@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -9,19 +8,31 @@
 </head>
 <body>
 
-  <div id="app">
+  <!-- DASHBOARD -->
+  <div id="dashboard">
     <header>
       <p class="subtitle">AI Command Center</p>
       <h1>Jarvis</h1>
     </header>
-
     <main>
       <div id="thread-list">
         <p class="loading">Loading threads...</p>
       </div>
     </main>
-
     <button id="new-thread-btn">+ New Thread</button>
+  </div>
+
+  <!-- CHAT VIEW -->
+  <div id="chat-view" style="display:none;">
+    <header class="chat-header">
+      <button onclick="backToDashboard()" class="back-btn">← Back</button>
+      <h2 id="thread-title"></h2>
+    </header>
+    <div id="chat-messages"></div>
+    <div class="chat-input-area">
+      <input type="text" id="chat-input" placeholder="Ask Jarvis anything..." />
+      <button id="send-btn">→</button>
+    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
