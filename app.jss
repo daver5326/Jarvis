@@ -20,5 +20,11 @@ async function loadThreads() {
       '<p>Exception: ' + e.message + '</p>';
   }
 }
+function enableAudio() {
+  document.getElementById('audio-prompt').style.display = 'none';
+  const utterance = new SpeechSynthesisUtterance('Jarvis voice enabled.');
+  utterance.volume = 1.0;
+  window.speechSynthesis.speak(utterance);
+}
 
 loadThreads();
