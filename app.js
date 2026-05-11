@@ -124,3 +124,64 @@ document.getElementById('new-thread-btn').addEventListener('click', function() {
 });
 
 loadThreads();
+
+// Voice commands
+const micBtn = document.getElementById('mic-btn');
+let recognition = null;
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = function(event) {
+    const transcript = event.results[0][0].transcript.toLowerCase().trim();
+    micBtn.textContent = '🎤';
+    
+    // Check for project switching command
+    if (transcript.startsWith('project ')) {
+      const projectName = transcript.replace('project ', '').trim();
+      switchToProject(projectName);
+    } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
+      alert('New thread form coming soon.');
+    } else {
+      // Otherwise use as chat input
+      document.getElementById('chat-input').value = transcript;
+      sendMessage();
+    }
+  };
+
+  recognition.onerror = function() {
+    micBtn.textContent = '🎤';
+  };
+
+  recognition.onend = function() {
+    micBtn.textContent = '🎤';
+  };
+
+  micBtn.addEventListener('click', function() {
+    micBtn.textContent = '🔴';
+    recognition.start();
+  });
+} else {
+  micBtn.style.opacity = '0.3';
+  micBtn.title = 'Voice not supported in this browser';
+}
+
+async function switchToProject(name) {
+  const result = await db.from('Threads').select('*');
+  if (!result.data) return;
+  
+  const match = result.data.find(t => 
+    t['Thread name'].toLowerCase().includes(name)
+  );
+  
+  if (match) {
+    openThread(match.id);
+  } else {
+    addMessage('assistant', `I couldn't find a project called "${name}". Check the dashboard for your project names.`);
+  }
+}
+
