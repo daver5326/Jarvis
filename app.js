@@ -236,8 +236,52 @@ async function switchToProject(name) {
 }
 
 function openNewThreadForm() {
-  alert('New thread form coming soon.');
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('new-thread-view').style.display = 'block';
 }
+
+function closeNewThreadForm() {
+  document.getElementById('new-thread-view').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'block';
+}
+
+async function saveNewThread() {
+  const name = document.getElementById('nt-name').value.trim();
+  const goal = document.getElementById('nt-goal').value.trim();
+  
+  if (!name || !goal) {
+    alert('Thread name and goal are required.');
+    return;
+  }
+
+  const newThread = {
+    'Thread name': name,
+    'platform': document.getElementById('nt-platform').value,
+    'Goal': goal,
+    'Status': 'Active',
+    'Current progress': document.getElementById('nt-progress').value.trim(),
+    'Next step': document.getElementById('nt-nextstep').value.trim(),
+    'Decisions made': document.getElementById('nt-decisions').value.trim(),
+    'Open question': document.getElementById('nt-questions').value.trim(),
+    'Note': document.getElementById('nt-notes').value.trim(),
+  };
+
+  const { error } = await db.from('Threads').insert([newThread]);
+  
+  if (error) {
+    alert('Error saving thread: ' + error.message);
+    return;
+  }
+
+  // Clear form
+  ['nt-name','nt-goal','nt-progress','nt-nextstep','nt-decisions','nt-questions','nt-notes'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+
+  closeNewThreadForm();
+  loadThreads();
+}
+
 
 document.getElementById('send-btn').addEventListener('click', sendMessage);
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
