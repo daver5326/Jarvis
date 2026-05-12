@@ -8,6 +8,7 @@ let currentThread = null;
 let chatHistory = [];
 let systemContext = '';
 let isListening = false;
+let audioEnabled = false;
 let recognition = null;
 
 async function loadThreads() {
@@ -38,12 +39,17 @@ async function openThread(id) {
   
   currentThread = result.data;
   chatHistory = [];
+  audioEnabled = false;
+  isListening = false;
   
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('chat-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
-  document.getElementById('audio-prompt').style.display = 'block';
+  
+  const micBtn = document.getElementById('mic-btn');
+  micBtn.textContent = '🎤';
+  micBtn.style.opacity = '1';
   
   systemContext = `You are Jarvis, a personal AI assistant helping with a project called "${currentThread['Thread name']}".
 
@@ -60,14 +66,8 @@ The user works exclusively from their phone. They prefer direct, practical guida
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
 }
 
-function enableAudio() {
-  document.getElementById('audio-prompt').style.display = 'none';
-  const utterance = new SpeechSynthesisUtterance('Jarvis voice enabled.');
-  utterance.volume = 1.0;
-  window.speechSynthesis.speak(utterance);
-}
-
 function speak(text) {
+  if (!audioEnabled) return;
   window.speechSynthesis.cancel();
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.rate = 1.05;
@@ -137,13 +137,14 @@ function backToDashboard() {
     isListening = false;
     recognition.stop();
   }
+  audioEnabled = false;
   document.getElementById('dashboard').style.display = 'block';
   document.getElementById('chat-view').style.display = 'none';
   currentThread = null;
   chatHistory = [];
 }
 
-// Voice input
+// Single smart mic button
 const micBtn = document.getElementById('mic-btn');
 
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -174,7 +175,7 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         const projectName = transcript.replace('project ', '').trim();
         switchToProject(projectName);
       } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
-        alert('New thread form coming soon.');
+        openNewThreadForm();
       } else {
         textarea.value = final.trim();
         sendMessage();
@@ -183,8 +184,8 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   };
 
   recognition.onerror = function() {
-    micBtn.textContent = '🎤';
     isListening = false;
+    micBtn.textContent = '🎤';
   };
 
   recognition.onend = function() {
@@ -196,11 +197,21 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   };
 
   micBtn.addEventListener('click', function() {
-    if (isListening) {
+    if (!audioEnabled) {
+      // First tap — enable audio and start listening
+      audioEnabled = true;
+      isListening = true;
+      micBtn.textContent = '🔴';
+      const utterance = new SpeechSynthesisUtterance('Jarvis listening.');
+      window.speechSynthesis.speak(utterance);
+      recognition.start();
+    } else if (isListening) {
+      // Second tap — stop listening, keep audio on
       isListening = false;
       recognition.stop();
       micBtn.textContent = '🎤';
     } else {
+      // Third tap — start listening again
       isListening = true;
       micBtn.textContent = '🔴';
       recognition.start();
@@ -224,6 +235,10 @@ async function switchToProject(name) {
   }
 }
 
+function openNewThreadForm() {
+  alert('New thread form coming soon.');
+}
+
 document.getElementById('send-btn').addEventListener('click', sendMessage);
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -231,8 +246,6 @@ document.getElementById('chat-input').addEventListener('keypress', function(e) {
     sendMessage();
   }
 });
-document.getElementById('new-thread-btn').addEventListener('click', function() {
-  alert('New thread form coming soon.');
-});
+document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
 
 loadThreads();
