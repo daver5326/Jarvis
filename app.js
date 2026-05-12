@@ -144,82 +144,26 @@ function backToDashboard() {
   chatHistory = [];
 }
 
-// Single smart mic button
-const micBtn = document.getElementById('mic-btn');
-
-if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-  recognition = new SpeechRecognition();
-  recognition.continuous = false;
-  recognition.interimResults = true;
-  recognition.lang = 'en-US';
-
-  recognition.onresult = function(event) {
-    let interim = '';
-    let final = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        final += event.results[i][0].transcript;
-      } else {
-        interim += event.results[i][0].transcript;
-      }
-    }
-    const textarea = document.getElementById('chat-input');
-    textarea.value = final || interim;
-    textarea.scrollTop = textarea.scrollHeight;
-    
-    if (final) {
-      const transcript = final.toLowerCase().trim();
-      textarea.value = '';
-      if (transcript.startsWith('project ')) {
-        const projectName = transcript.replace('project ', '').trim();
-        switchToProject(projectName);
-      } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
-        openNewThreadForm();
-      } else {
-        textarea.value = final.trim();
-        sendMessage();
-      }
-    }
-  };
-
-  recognition.onerror = function() {
-    isListening = false;
-    micBtn.textContent = '🎤';
-  };
-
-  recognition.onend = function() {
-    if (isListening) {
-      setTimeout(() => { if (isListening) recognition.start(); }, 300);
-    } else {
-      micBtn.textContent = '🎤';
-    }
-  };
-
-  micBtn.addEventListener('click', function() {
-    if (!audioEnabled) {
-      // First tap — enable audio and start listening
-      audioEnabled = true;
-      isListening = true;
-      micBtn.textContent = '🔴';
-      const utterance = new SpeechSynthesisUtterance('Jarvis listening.');
-      window.speechSynthesis.speak(utterance);
-      recognition.start();
-    } else if (isListening) {
-      // Second tap — stop listening, keep audio on
-      isListening = false;
-      recognition.stop();
-      micBtn.textContent = '🎤';
-    } else {
-      // Third tap — start listening again
-      isListening = true;
-      micBtn.textContent = '🔴';
-      recognition.start();
-    }
-  });
-
-} else {
-  micBtn.style.opacity = '0.3';
+async function saveIdea(transcript) {
+  if (!currentThread) {
+    addMessage('assistant', "I need to be in a thread to save an idea. Open a project first.");
+    return;
+  }
+  
+  const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
+  const ideaText = recentContext || transcript;
+  
+  const { error } = await db.from('ideas').insert([{
+    thread_id: currentThread.id,
+    idea_text: ideaText,
+    status: 'raw'
+  }]);
+  
+  if (error) {
+    addMessage('assistant', 'Error saving idea: ' + error.message);
+  } else {
+    addMessage('assistant', 'Banked. I saved that idea from our conversation.');
+  }
 }
 
 async function switchToProject(name) {
@@ -273,7 +217,6 @@ async function saveNewThread() {
     return;
   }
 
-  // Clear form
   ['nt-name','nt-goal','nt-progress','nt-nextstep','nt-decisions','nt-questions','nt-notes'].forEach(id => {
     document.getElementById(id).value = '';
   });
@@ -282,6 +225,82 @@ async function saveNewThread() {
   loadThreads();
 }
 
+const micBtn = document.getElementById('mic-btn');
+
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SpeechRecognition();
+  recognition.continuous = false;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  recognition.onresult = function(event) {
+    let interim = '';
+    let final = '';
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        final += event.results[i][0].transcript;
+      } else {
+        interim += event.results[i][0].transcript;
+      }
+    }
+    const textarea = document.getElementById('chat-input');
+    textarea.value = final || interim;
+    textarea.scrollTop = textarea.scrollHeight;
+    
+    if (final) {
+      const transcript = final.toLowerCase().trim();
+      textarea.value = '';
+      
+      if (transcript.startsWith('project ')) {
+        const projectName = transcript.replace('project ', '').trim();
+        switchToProject(projectName);
+      } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
+        openNewThreadForm();
+      } else if (transcript.includes('bank that') || transcript.includes('save that') || transcript.includes('save this idea') || transcript.includes('remember that') || transcript.includes('hold that')) {
+        saveIdea(transcript);
+      } else {
+        textarea.value = final.trim();
+        sendMessage();
+      }
+    }
+  };
+
+  recognition.onerror = function() {
+    isListening = false;
+    micBtn.textContent = '🎤';
+  };
+
+  recognition.onend = function() {
+    if (isListening) {
+      setTimeout(() => { if (isListening) recognition.start(); }, 300);
+    } else {
+      micBtn.textContent = '🎤';
+    }
+  };
+
+  micBtn.addEventListener('click', function() {
+    if (!audioEnabled) {
+      audioEnabled = true;
+      isListening = true;
+      micBtn.textContent = '🔴';
+      const utterance = new SpeechSynthesisUtterance('Jarvis listening.');
+      window.speechSynthesis.speak(utterance);
+      recognition.start();
+    } else if (isListening) {
+      isListening = false;
+      recognition.stop();
+      micBtn.textContent = '🎤';
+    } else {
+      isListening = true;
+      micBtn.textContent = '🔴';
+      recognition.start();
+    }
+  });
+
+} else {
+  micBtn.style.opacity = '0.3';
+}
 
 document.getElementById('send-btn').addEventListener('click', sendMessage);
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
