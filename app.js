@@ -155,8 +155,7 @@ async function saveIdea(transcript) {
   
   const { error } = await db.from('Ideas').insert([{
     thread_id: currentThread.id,
-    idea_text: ideaText,
-    status: 'raw'
+    idea_text: ideaText
   }]);
   
   if (error) {
