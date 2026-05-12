@@ -154,7 +154,7 @@ async function saveIdea(transcript) {
   const ideaText = recentContext || transcript;
   
   const { error } = await db.from('Ideas').insert([{
-    thread_id: currentThread.id,
+    Thread_id: currentThread.id,
     idea_text: ideaText
   }]);
   
