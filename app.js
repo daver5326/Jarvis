@@ -153,7 +153,7 @@ async function saveIdea(transcript) {
   const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
   const ideaText = recentContext || transcript;
   
-  const { error } = await db.from('ideas').insert([{
+  const { error } = await db.from('Ideas').insert([{
     thread_id: currentThread.id,
     idea_text: ideaText,
     status: 'raw'
