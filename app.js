@@ -10,10 +10,11 @@ let systemContext = '';
 let isListening = false;
 let audioEnabled = false;
 let recognition = null;
+let ideasCache = [];
 
 async function loadThreads() {
   try {
-    const result = await db.from('Threads').select('*');
+    const result = await db.from('Threads').select('*').order('id', { ascending: false });
     if (result.data && result.data.length > 0) {
       const html = result.data.map(thread => `
         <div class="thread-card" onclick="openThread(${thread.id})">
@@ -63,7 +64,13 @@ Notes: ${currentThread['Note']}
 
 The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Get straight to helping them make progress. Keep responses concise and conversational since they may be listening rather than reading.`;
 
+  await loadIdeas();
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
+}
+
+async function loadIdeas() {
+  const result = await db.from('Ideas').select('*').eq('Thread_id', currentThread.id);
+  ideasCache = result.data || [];
 }
 
 function speak(text) {
@@ -161,7 +168,8 @@ async function saveIdea(transcript) {
   if (error) {
     addMessage('assistant', 'Error saving idea: ' + error.message);
   } else {
-    addMessage('assistant', 'Banked. I saved that idea from our conversation.');
+    await loadIdeas();
+    addMessage('assistant', 'Banked. I saved that idea.');
   }
 }
 
