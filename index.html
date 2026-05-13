@@ -21,6 +21,7 @@
     </main>
     <button id="new-thread-btn">+ New Thread</button>
   </div>
+
   <!-- NEW THREAD FORM -->
   <div id="new-thread-view" style="display:none;">
     <header>
@@ -28,60 +29,5 @@
       <h1>New Thread</h1>
     </header>
     <main style="padding:20px;">
-      <label class="form-label">Thread Name</label>
-      <input type="text" id="nt-name" placeholder="e.g. Safety Index, My Song..." class="form-input" />
-
-      <label class="form-label">Platform</label>
-      <select id="nt-platform" class="form-input">
-        <option value="Claude">Claude</option>
-        <option value="ChatGPT">ChatGPT</option>
-        <option value="Grok">Grok</option>
-      </select>
-
-      <label class="form-label">Goal</label>
-      <textarea id="nt-goal" placeholder="What are you trying to accomplish?" class="form-input" rows="3"></textarea>
-
-      <label class="form-label">Where You Left Off</label>
-      <textarea id="nt-progress" placeholder="Paste context from your last session..." class="form-input" rows="3"></textarea>
-
-      <label class="form-label">Next Steps</label>
-      <textarea id="nt-nextstep" placeholder="What needs to happen next?" class="form-input" rows="2"></textarea>
-
-      <label class="form-label">Decisions Made</label>
-      <textarea id="nt-decisions" placeholder="What's already been decided?" class="form-input" rows="2"></textarea>
-
-      <label class="form-label">Open Questions</label>
-      <textarea id="nt-questions" placeholder="What's still unresolved?" class="form-input" rows="2"></textarea>
-
-      <label class="form-label">Notes</label>
-      <textarea id="nt-notes" placeholder="Any other context..." class="form-input" rows="3"></textarea>
-
-      <button onclick="saveNewThread()" style="width:100%; padding:16px; background:#E8845A; color:#fff; border:none; border-radius:8px; font-size:16px; font-family:inherit; font-weight:600; margin-top:8px; cursor:pointer;">Save Thread</button>
-      <div style="height:40px;"></div>
-    </main>
-  </div>
-
-  <!-- CHAT VIEW -->
-  <div id="chat-view" style="display:none;">
-    <header class="chat-header">
-      <button onclick="backToDashboard()" class="back-btn">← Back</button>
-      <h2 id="thread-title"></h2>
-    </header>
-    <div id="audio-prompt" style="text-align:center; padding:16px; background:#fff8f5; border-bottom:1px solid #ddd;">
-  <button onclick="enableAudio()" style="background:#E8845A; color:#fff; border:none; padding:10px 20px; border-radius:20px; font-size:14px; cursor:pointer;">🔊 Tap to enable Jarvis voice</button>
-</div>
-
-<div id="chat-messages"></div>
-
-    <div class="chat-input-area">
-  <button id="mic-btn">🎤</button>
-  <textarea id="chat-input" placeholder="Ask Jarvis anything..." rows="2"></textarea>
-  <button id="send-btn">→</button>
-</div>
-
-
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="app.js"></script>
-
-</body>
-</html>
+      <label class="form-label">Thread Name *</label>
+      <input type="text" id="nt-name" placeholder="e.g. My Book, Safety​​​​​​​​​​​​​​​​
