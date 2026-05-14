@@ -16,13 +16,22 @@ async function loadThreads() {
     const result = await db.from('Threads').select('*');
     if (result.error) throw result.error;
     if (result.data && result.data.length > 0) {
-      const html = result.data.map(thread => `
-        <div class="thread-card" onclick="openThread(${thread.id})">
-          <div class="platform-badge">${thread.platform || 'Claude'}</div>
-          <h2>${thread['Thread name']}</h2>
-          <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
-        </div>
-      `).join('');
+      // Sort: Active first, Paused second, Complete last
+      const sorted = result.data.sort((a, b) => {
+        const order = { 'Active': 0, 'Paused': 1, 'Complete': 2 };
+        return (order[a['Status']] || 0) - (order[b['Status']] || 0);
+      });
+      const html = sorted.map(thread => {
+        const isComplete = thread['Status'] === 'Complete';
+        const isPaused = thread['Status'] === 'Paused';
+        return `
+          <div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''}" onclick="openThread(${thread.id})">
+            <div class="platform-badge">${thread.platform || 'Claude'}</div>
+            <h2>${thread['Thread name']}</h2>
+            <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
+          </div>
+        `;
+      }).join('');
       document.getElementById('thread-list').innerHTML = html;
     } else {
       document.getElementById('thread-list').innerHTML = 
@@ -68,24 +77,28 @@ async function openThread(id) {
   const ideasContext = ideas.length > 0 
     ? '\n\nBANKED IDEAS FOR THIS PROJECT:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
     : '';
+
+  // Pull recent progress for session memory
+  const recentProgress = currentThread['Current progress'] 
+    ? '\n\nRECENT SESSION HISTORY:\n' + currentThread['Current progress'].slice(-1500)
+    : '';
   
   systemContext = `You are Jarvis, a personal AI assistant helping with a project called "${currentThread['Thread name']}".
 
 Goal: ${currentThread['Goal']}
 Status: ${currentThread['Status']}
-Progress: ${currentThread['Current progress']}
 Next Steps: ${currentThread['Next step']}
 Decisions Made: ${currentThread['Decisions made']}
 Open Questions: ${currentThread['Open question']}
-Notes: ${currentThread['Note']}${ideasContext}
+Notes: ${currentThread['Note']}${recentProgress}${ideasContext}
 
 IMPORTANT CAPABILITIES:
-- If the user says "bank that", "save that", "remember that", or "hold that" — confirm you are saving the idea to their permanent database.
-- If the user says "save progress" or "save session" — confirm you are saving a summary of this conversation to the thread.
+- If the user says "bank that", "bank it", "save that", "remember that", or "hold that" — confirm saving the idea to their permanent database.
+- If the user says "save progress" or "save session" — confirm saving a summary of this conversation.
 - If the user says "project [name]" — you will switch to that project.
 - If the user says "edit thread" — the edit form will open.
 
-The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Keep responses concise and conversational — they may be listening rather than reading.`;
+The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Keep responses concise and conversational — they may be listening rather than reading. Reference their recent session history naturally when relevant — this helps you feel like a continuous partner rather than starting fresh each time.`;
 
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
 }
@@ -155,7 +168,15 @@ async function sendMessage() {
   }
 }
 
+async function autoSaveProgress() {
+  if (!currentThread || chatHistory.length < 3) return;
+  const summary = chatHistory.slice(-8).map(m => (m.role === 'user' ? 'Me: ' : 'Jarvis: ') + m.content).join('\n');
+  const newProgress = (currentThread['Current progress'] || '') + '\n\n[Auto-saved ' + new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString() + ']\n' + summary;
+  await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', currentThread.id);
+}
+
 function backToDashboard() {
+  autoSaveProgress();
   window.speechSynthesis.cancel();
   if (isListening && recognition) {
     isListening = false;
@@ -236,6 +257,21 @@ async function saveEditThread() {
     Object.assign(currentThread, updates);
     closeEditThread();
     addMessage('assistant', 'Thread updated.');
+  }
+}
+
+async function deleteThread() {
+  if (!currentThread) return;
+  const confirmed = confirm('Delete "' + currentThread['Thread name'] + '"? This cannot be undone.');
+  if (!confirmed) return;
+  const { error } = await db.from('Threads').delete().eq('id', currentThread.id);
+  if (error) {
+    alert('Error deleting: ' + error.message);
+  } else {
+    document.getElementById('edit-thread-view').style.display = 'none';
+    document.getElementById('dashboard').style.display = 'block';
+    currentThread = null;
+    loadThreads();
   }
 }
 
