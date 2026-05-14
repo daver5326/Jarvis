@@ -55,11 +55,45 @@
     </main>
   </div>
 
+  <!-- EDIT THREAD FORM -->
+  <div id="edit-thread-view" style="display:none;">
+    <header>
+      <button onclick="closeEditThread()" class="back-btn">← Cancel</button>
+      <h1>Edit Thread</h1>
+    </header>
+    <main style="padding:20px;">
+      <label class="form-label">Thread Name</label>
+      <input type="text" id="et-name" class="form-input" />
+      <label class="form-label">Status</label>
+      <select id="et-status" class="form-input">
+        <option value="Active">Active</option>
+        <option value="Paused">Paused</option>
+        <option value="Complete">Complete</option>
+      </select>
+      <label class="form-label">Goal</label>
+      <textarea id="et-goal" class="form-input" rows="3"></textarea>
+      <label class="form-label">Current Progress</label>
+      <textarea id="et-progress" class="form-input" rows="4"></textarea>
+      <label class="form-label">Next Steps</label>
+      <textarea id="et-nextstep" class="form-input" rows="2"></textarea>
+      <label class="form-label">Decisions Made</label>
+      <textarea id="et-decisions" class="form-input" rows="2"></textarea>
+      <label class="form-label">Open Questions</label>
+      <textarea id="et-questions" class="form-input" rows="2"></textarea>
+      <label class="form-label">Notes</label>
+      <textarea id="et-notes" class="form-input" rows="4"></textarea>
+      <button onclick="saveEditThread()" style="width:100%; padding:16px; background:#E8845A; color:#fff; border:none; border-radius:8px; font-size:16px; font-family:inherit; font-weight:600; margin-top:16px; cursor:pointer;">Save Changes</button>
+      <div style="height:40px;"></div>
+    </main>
+  </div>
+
   <!-- CHAT VIEW -->
   <div id="chat-view" style="display:none;">
     <header class="chat-header">
       <button onclick="backToDashboard()" class="back-btn">← Back</button>
       <h2 id="thread-title"></h2>
+      <button onclick="openEditThread()" class="edit-btn">✏️</button>
+      <button onclick="saveProgress()" class="save-btn">💾</button>
     </header>
     <div id="chat-messages"></div>
     <div class="chat-input-area">
