@@ -61,9 +61,15 @@ main {
 }
 
 .thread-card p {
-  font-size: 13px;
-  color: #555;
+  font-size: 12px;
+  color: #888;
   line-height: 1.5;
+}
+
+.thread-status {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
 }
 
 .platform-badge {
@@ -111,12 +117,12 @@ main {
 }
 
 .chat-header {
-  padding: 14px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid #ddd;
   background: #fff;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   position: sticky;
   top: 0;
   z-index: 10;
@@ -133,8 +139,21 @@ main {
   white-space: nowrap;
 }
 
+.edit-btn, .save-btn {
+  background: transparent;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px;
+  margin-left: auto;
+}
+
+.save-btn {
+  margin-left: 0;
+}
+
 .chat-header h2 {
-  font-size: 17px;
+  font-size: 16px;
   color: #111;
   font-family: 'Playfair Display', Georgia, serif;
   flex: 1;
@@ -186,6 +205,35 @@ main {
   letter-spacing: 4px;
 }
 
+.ideas-panel {
+  background: #fffbf5;
+  border: 1px solid #f0e8d8;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+.ideas-label {
+  font-size: 9px;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: #bbb;
+  margin-bottom: 8px;
+}
+
+.idea-chip {
+  font-size: 12px;
+  color: #666;
+  padding: 6px 0;
+  border-bottom: 1px solid #f0e8d8;
+  line-height: 1.4;
+}
+
+.idea-chip:last-child {
+  border-bottom: none;
+}
+
 .chat-input-area {
   padding: 12px 16px;
   background: #fff;
@@ -209,7 +257,6 @@ main {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.2s;
 }
 
 #chat-input {
@@ -269,13 +316,15 @@ select.form-input {
   resize: none;
 }
 
-#new-thread-view header {
+#new-thread-view header,
+#edit-thread-view header {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 16px 20px;
 }
 
-#new-thread-view h1 {
+#new-thread-view h1,
+#edit-thread-view h1 {
   font-size: 20px;
 }
