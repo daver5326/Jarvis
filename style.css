@@ -72,6 +72,16 @@ main {
   margin-top: 4px;
 }
 
+.thread-card.paused {
+  opacity: 0.6;
+  border-left-color: #aaa;
+}
+
+.thread-card.complete {
+  opacity: 0.4;
+  border-left-color: #ccc;
+}
+
 .platform-badge {
   display: inline-block;
   font-size: 9px;
