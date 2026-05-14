@@ -52,8 +52,7 @@ async function openThread(id) {
   micBtn.textContent = '🎤';
   micBtn.style.opacity = '1';
 
-  // Load and display banked ideas
-  const ideasResult = await db.from('Ideas').select('*').eq('Thread_id', id);
+  const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
   
   if (ideas.length > 0) {
@@ -66,7 +65,6 @@ async function openThread(id) {
     document.getElementById('chat-messages').appendChild(ideasDiv);
   }
 
-  // Build ideas context for system prompt
   const ideasContext = ideas.length > 0 
     ? '\n\nBANKED IDEAS FOR THIS PROJECT:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
     : '';
@@ -82,12 +80,12 @@ Open Questions: ${currentThread['Open question']}
 Notes: ${currentThread['Note']}${ideasContext}
 
 IMPORTANT CAPABILITIES:
-- If the user says "bank that", "save that", "remember that", or "hold that" — you should confirm you're saving the idea to their permanent database for this project.
-- If the user says "save progress" or "save session" — confirm you're saving a summary of this conversation to the thread.
-- If the user says "project [name]" — you'll switch to that project.
+- If the user says "bank that", "save that", "remember that", or "hold that" — confirm you are saving the idea to their permanent database.
+- If the user says "save progress" or "save session" — confirm you are saving a summary of this conversation to the thread.
+- If the user says "project [name]" — you will switch to that project.
 - If the user says "edit thread" — the edit form will open.
 
-The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Keep responses concise and conversational — they may be listening rather than reading. Get straight to helping them make progress.`;
+The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Keep responses concise and conversational — they may be listening rather than reading.`;
 
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
 }
@@ -178,7 +176,7 @@ async function saveIdea(transcript) {
   const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
   const ideaText = recentContext || transcript;
   const { error } = await db.from('Ideas').insert([{
-    Thread_id: currentThread.id,
+    thread_id: currentThread.id,
     idea_text: ideaText
   }]);
   if (error) {
@@ -291,11 +289,9 @@ const micBtn = document.getElementById('mic-btn');
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SpeechRecognition();
-  recognition.continuous = true;
+  recognition.continuous = false;
   recognition.interimResults = true;
   recognition.lang = 'en-US';
-
-  let silenceTimer = null;
 
   recognition.onresult = function(event) {
     let interim = '', final = '';
@@ -304,30 +300,26 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       else interim += event.results[i][0].transcript;
     }
     const textarea = document.getElementById('chat-input');
-    if (interim) textarea.value = interim;
+    textarea.value = final || interim;
     textarea.scrollTop = textarea.scrollHeight;
 
     if (final) {
-      clearTimeout(silenceTimer);
-      textarea.value = final.trim();
       const transcript = final.toLowerCase().trim();
-
-      silenceTimer = setTimeout(() => {
-        textarea.value = '';
-        if (transcript.startsWith('project ')) {
-          switchToProject(transcript.replace('project ', '').trim());
-        } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
-          openNewThreadForm();
-        } else if (transcript.includes('bank that') || transcript.includes('save that') || transcript.includes('remember that') || transcript.includes('hold that')) {
-          saveIdea(transcript);
-        } else if (transcript.includes('save progress') || transcript.includes('save session')) {
-          saveProgress();
-        } else if (transcript.includes('edit thread') || transcript.includes('update thread')) {
-          openEditThread();
-        } else {
-          sendMessage();
-        }
-      }, 800);
+      textarea.value = '';
+      if (transcript.startsWith('project ')) {
+        switchToProject(transcript.replace('project ', '').trim());
+      } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
+        openNewThreadForm();
+      } else if (transcript.includes('bank that') || transcript.includes('bank it') || transcript.includes('save that') || transcript.includes('remember that') || transcript.includes('hold that')) {
+        saveIdea(transcript);
+      } else if (transcript.includes('save progress') || transcript.includes('save session')) {
+        saveProgress();
+      } else if (transcript.includes('edit thread') || transcript.includes('update thread')) {
+        openEditThread();
+      } else {
+        textarea.value = final.trim();
+        sendMessage();
+      }
     }
   };
 
