@@ -16,7 +16,6 @@ async function loadThreads() {
     const result = await db.from('Threads').select('*');
     if (result.error) throw result.error;
     if (result.data && result.data.length > 0) {
-      // Sort: Active first, Paused second, Complete last
       const sorted = result.data.sort((a, b) => {
         const order = { 'Active': 0, 'Paused': 1, 'Complete': 2 };
         return (order[a['Status']] || 0) - (order[b['Status']] || 0);
@@ -61,6 +60,7 @@ async function openThread(id) {
   micBtn.textContent = '🎤';
   micBtn.style.opacity = '1';
 
+  // Load ideas
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
   
@@ -74,31 +74,52 @@ async function openThread(id) {
     document.getElementById('chat-messages').appendChild(ideasDiv);
   }
 
+  // Load ALL other active threads for cross-thread awareness
+  const allThreadsResult = await db.from('Threads').select('*');
+  const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
+  
+  const crossThreadContext = otherThreads.length > 0
+    ? '\n\nOTHER ACTIVE PROJECTS (for cross-project awareness):\n' + otherThreads.map(t => 
+        `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 100) : 'No goal set'}${t['Next step'] ? ' | Next: ' + t['Next step'].slice(0, 80) : ''}`
+      ).join('\n')
+    : '';
+
   const ideasContext = ideas.length > 0 
     ? '\n\nBANKED IDEAS FOR THIS PROJECT:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
     : '';
 
-  // Pull recent progress for session memory
+  // Smart session history — last 2000 chars of progress
   const recentProgress = currentThread['Current progress'] 
-    ? '\n\nRECENT SESSION HISTORY:\n' + currentThread['Current progress'].slice(-1500)
+    ? '\n\nRECENT SESSION HISTORY (most recent first):\n' + currentThread['Current progress'].slice(-2000)
     : '';
   
-  systemContext = `You are Jarvis, a personal AI assistant helping with a project called "${currentThread['Thread name']}".
+  systemContext = `You are Jarvis, a personal AI assistant for David Rogers.
 
+CURRENT PROJECT: "${currentThread['Thread name']}"
 Goal: ${currentThread['Goal']}
 Status: ${currentThread['Status']}
 Next Steps: ${currentThread['Next step']}
 Decisions Made: ${currentThread['Decisions made']}
 Open Questions: ${currentThread['Open question']}
-Notes: ${currentThread['Note']}${recentProgress}${ideasContext}
+Notes: ${currentThread['Note']}${recentProgress}${ideasContext}${crossThreadContext}
 
-IMPORTANT CAPABILITIES:
-- If the user says "bank that", "bank it", "save that", "remember that", or "hold that" — confirm saving the idea to their permanent database.
-- If the user says "save progress" or "save session" — confirm saving a summary of this conversation.
-- If the user says "project [name]" — you will switch to that project.
-- If the user says "edit thread" — the edit form will open.
+ABOUT DAVID:
+- 60 years old, works exclusively from his phone
+- Has ADHD — needs focused, clear, concise responses
+- Prefers direct practical guidance, not excessive explanation
+- Building Jarvis as both a personal tool and future market product
+- Responds well to pushback and honest assessment
+- Tends toward big picture thinking — sometimes needs redirecting to local/immediate problem
+- Voice input preferred — keep responses short enough to listen to comfortably
 
-The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Keep responses concise and conversational — they may be listening rather than reading. Reference their recent session history naturally when relevant — this helps you feel like a continuous partner rather than starting fresh each time.`;
+CAPABILITIES YOU HAVE:
+- "bank that/it", "save that", "remember that", "hold that" → saves idea to permanent database
+- "save progress" or "save session" → saves conversation summary to thread
+- "project [name]" → switches to that project
+- "edit thread" → opens edit form
+- Tap ← Back → auto-saves session before leaving
+
+Reference session history and cross-project context naturally when relevant. You are a continuous partner, not a fresh start each session.`;
 
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
 }
