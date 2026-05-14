@@ -43,24 +43,77 @@ async function loadThreads() {
   }
 }
 
-async function buildMasterContext() {
-  const result = await db.from('Threads').select('*');
-  const threads = (result.data || []).filter(t => t['Status'] === 'Active');
+async function buildMasterContext(threads) {
+  const active = threads.filter(t => t['Status'] === 'Active');
   return `You are Jarvis, a personal AI assistant for David Rogers.
 
-David is viewing his dashboard — no specific project is open. You have awareness of all his active projects.
+David is on his dashboard. You have full awareness of all his active projects.
 
 ACTIVE PROJECTS:
-${threads.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0, 80) : 'Not set'}`).join('\n')}
+${active.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0, 80) : 'Not set'}`).join('\n')}
 
 ABOUT DAVID:
 - 60 years old, works exclusively from his phone
-- Has ADHD — needs focused, clear, concise responses  
+- Has ADHD — needs focused, clear, concise responses
 - Building Jarvis as personal tool and future market product
 - Responds well to pushback and honest assessment
 - Voice input preferred — keep responses short and conversational
+- Tends toward big picture thinking — sometimes needs redirecting to immediate problem
 
-You can help David decide what to work on, capture new ideas, switch to a project, or just think things through. If he says "project [name]" or "switch to [name]", confirm you're switching and the app will navigate there. Respond conversationally — never use code blocks, YAML, bullet lists, or formatted output. Just talk.`;
+You can help David decide what to work on, capture ideas, switch projects, or think things through. If he says "project [name]" or "switch to [name]", the app will navigate there. Respond conversationally — never use code blocks, YAML, bullet lists, or markdown formatting. Just talk naturally. Responses may be listened to, not read.`;
+}
+
+async function greetOnLoad() {
+  const result = await db.from('Threads').select('*');
+  const threads = result.data || [];
+  const active = threads.filter(t => t['Status'] === 'Active');
+  
+  if (active.length === 0) return;
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  
+  // Find thread with most recent progress or next step
+  const suggested = active.find(t => t['Next step']) || active[0];
+  
+  const masterCtx = await buildMasterContext(threads);
+  systemContext = masterCtx;
+  chatHistory = [];
+
+  const prompt = `${greeting} David. Give a very brief, natural, conversational greeting. Mention how many active projects there are (${active.length}). Suggest one specific thing to work on based on this project: "${suggested['Thread name']}" with next step: "${suggested['Next step'] || 'no next step set'}". Keep it to 2-3 sentences max. Be direct and energetic. No lists, no formatting.`;
+
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: masterCtx,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await response.json();
+    if (data.content && data.content[0]) {
+      const greeting_msg = data.content[0].text;
+      showDashboardMessage('assistant', greeting_msg);
+      // Speak greeting automatically
+      const utterance = new SpeechSynthesisUtterance(greeting_msg);
+      utterance.rate = 1.05;
+      window.speechSynthesis.speak(utterance);
+      chatHistory.push({ role: 'assistant', content: greeting_msg });
+    }
+  } catch(e) {
+    // Silent fail on greeting — not critical
+  }
+}
+
+function showDashboardMessage(role, text) {
+  const msgContainer = document.getElementById('dashboard-messages');
+  msgContainer.style.display = 'flex';
+  const div = document.createElement('div');
+  div.className = 'message ' + role;
+  div.textContent = text;
+  msgContainer.appendChild(div);
+  msgContainer.scrollTop = 999999;
 }
 
 async function openThread(id) {
@@ -133,17 +186,15 @@ ABOUT DAVID:
 
 CAPABILITIES:
 - "bank it" or "bank that" → saves idea to permanent database
-- "save that" or "remember that" or "hold that" → saves idea
+- "save that", "remember that", "hold that" → saves idea
 - "save progress" or "save session" → saves conversation summary
 - "project [name]" or "switch to [name]" → switches project
+- "what am I working on" → list active projects
 - "edit thread" → opens edit form
-- "what am I working on" → list all active projects
-- "show ideas" → read back banked ideas for this thread
-- Tap ← Back → auto-saves session
+- Tap Back → auto-saves session
 
-Respond conversationally. Never use code blocks, YAML, markdown formatting, or bullet lists. Just talk naturally — responses may be listened to, not read.`;
+Respond conversationally. Never use code blocks, YAML, markdown, or bullet lists. Just talk. Responses may be listened to.`;
 
-  // Smart opening — reference recent history if available
   let openingMsg = `Ready to work on ${currentThread['Thread name']}.`;
   if (currentThread['Current progress'] && currentThread['Current progress'].length > 100) {
     openingMsg += ` Picking up where we left off.`;
@@ -165,16 +216,13 @@ function speak(text) {
 }
 
 function addMessage(role, text) {
+  const messagesEl = document.getElementById('chat-messages');
+  if (!messagesEl) return;
   const div = document.createElement('div');
   div.className = 'message ' + role;
   div.textContent = text;
-  
-  const messagesEl = document.getElementById('chat-messages') || document.getElementById('dashboard-messages');
-  if (messagesEl) {
-    messagesEl.appendChild(div);
-    messagesEl.scrollTop = 999999;
-  }
-  
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = 999999;
   if (role !== 'assistant' || chatHistory.length === 0) {
     chatHistory.push({ role, content: text });
   }
@@ -188,27 +236,18 @@ async function sendMessage(inputId) {
   const input = document.getElementById(inputElId);
   const text = input.value.trim();
   if (!text) return;
-  
   input.value = '';
 
-  // For dashboard, use master context
   if (currentView === 'dashboard') {
-    const masterCtx = await buildMasterContext();
-    systemContext = masterCtx;
-    
-    const msgContainer = document.getElementById('dashboard-messages');
-    msgContainer.style.display = 'flex';
-    
-    const userDiv = document.createElement('div');
-    userDiv.className = 'message user';
-    userDiv.textContent = text;
-    msgContainer.appendChild(userDiv);
-    msgContainer.scrollTop = 999999;
+    const allResult = await db.from('Threads').select('*');
+    systemContext = await buildMasterContext(allResult.data || []);
+    showDashboardMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
     
     const thinking = document.createElement('div');
     thinking.className = 'message assistant thinking';
     thinking.textContent = '...';
+    const msgContainer = document.getElementById('dashboard-messages');
     msgContainer.appendChild(thinking);
     msgContainer.scrollTop = 999999;
     
@@ -225,20 +264,13 @@ async function sendMessage(inputId) {
       thinking.remove();
       if (data.content && data.content[0]) {
         const reply = data.content[0].text;
-        const replyDiv = document.createElement('div');
-        replyDiv.className = 'message assistant';
-        replyDiv.textContent = reply;
-        msgContainer.appendChild(replyDiv);
-        msgContainer.scrollTop = 999999;
+        showDashboardMessage('assistant', reply);
         chatHistory.push({ role: 'assistant', content: reply });
         speak(reply);
       }
     } catch(e) {
       thinking.remove();
-      const errDiv = document.createElement('div');
-      errDiv.className = 'message assistant';
-      errDiv.textContent = 'Error: ' + e.message;
-      msgContainer.appendChild(errDiv);
+      showDashboardMessage('assistant', 'Error: ' + e.message);
     }
     return;
   }
@@ -296,22 +328,19 @@ function backToDashboard() {
   document.getElementById('chat-view').style.display = 'none';
   currentThread = null;
   chatHistory = [];
-  
   const micBtn = document.getElementById('mic-btn');
-  if (micBtn) { micBtn.textContent = '🎤'; }
+  if (micBtn) micBtn.textContent = '🎤';
 }
 
 async function saveIdea(transcript) {
-  const targetThread = currentThread;
-  if (!targetThread) {
-    // On dashboard, just save to a general idea without thread_id
-    addDashboardMessage('assistant', 'Banked to your Idea Bank.');
+  if (!currentThread) {
+    showDashboardMessage('assistant', 'Tell me which project to bank that to, or open a project first.');
     return;
   }
   const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
   const ideaText = recentContext || transcript;
   const { error } = await db.from('Ideas').insert([{
-    thread_id: targetThread.id,
+    thread_id: currentThread.id,
     idea_text: ideaText
   }]);
   if (error) {
@@ -319,17 +348,6 @@ async function saveIdea(transcript) {
   } else {
     addMessage('assistant', 'Banked.');
   }
-}
-
-function addDashboardMessage(role, text) {
-  const msgContainer = document.getElementById('dashboard-messages');
-  msgContainer.style.display = 'flex';
-  const div = document.createElement('div');
-  div.className = 'message ' + role;
-  div.textContent = text;
-  msgContainer.appendChild(div);
-  msgContainer.scrollTop = 999999;
-  if (role === 'assistant') speak(text);
 }
 
 async function saveProgress() {
@@ -408,7 +426,9 @@ async function switchToProject(name) {
   if (match) {
     openThread(match.id);
   } else {
-    addMessage('assistant', `Couldn't find "${name}". Check your dashboard.`);
+    const msg = `Couldn't find "${name}". Your projects are: ${(result.data || []).map(t => t['Thread name']).join(', ')}`;
+    if (currentView === 'dashboard') showDashboardMessage('assistant', msg);
+    else addMessage('assistant', msg);
   }
 }
 
@@ -446,10 +466,8 @@ async function saveNewThread() {
   loadThreads();
 }
 
-// Voice handler — works for both dashboard and thread views
 function handleVoiceTranscript(transcript) {
   const t = transcript.toLowerCase().trim();
-  
   if (t.startsWith('project ') || t.startsWith('switch to ') || t.startsWith('open ')) {
     const name = t.replace(/^(project |switch to |open )/, '').trim();
     switchToProject(name);
@@ -462,7 +480,6 @@ function handleVoiceTranscript(transcript) {
   } else if (t.includes('edit thread') || t.includes('update thread')) {
     openEditThread();
   } else {
-    // Regular message
     const inputId = currentView === 'dashboard' ? 'dashboard-input' : 'chat-input';
     const input = document.getElementById(inputId);
     if (input) {
@@ -537,4 +554,7 @@ document.getElementById('dashboard-input').addEventListener('keypress', function
 });
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
 
-loadThreads();
+// Load threads then greet
+loadThreads().then(() => {
+  setTimeout(greetOnLoad, 800);
+});
