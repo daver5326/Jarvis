@@ -20,7 +20,7 @@ async function loadThreads() {
         <div class="thread-card" onclick="openThread(${thread.id})">
           <div class="platform-badge">${thread.platform || 'Claude'}</div>
           <h2>${thread['Thread name']}</h2>
-          <p>${thread['Goal'] || ''}</p>
+          <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
         </div>
       `).join('');
       document.getElementById('thread-list').innerHTML = html;
@@ -51,6 +51,18 @@ async function openThread(id) {
   const micBtn = document.getElementById('mic-btn');
   micBtn.textContent = '🎤';
   micBtn.style.opacity = '1';
+
+  // Load and display banked ideas
+  const ideasResult = await db.from('Ideas').select('*').eq('Thread_id', id);
+  if (ideasResult.data && ideasResult.data.length > 0) {
+    const ideasHtml = ideasResult.data.map(idea => 
+      `<div class="idea-chip">💡 ${idea.idea_text.slice(0, 80)}${idea.idea_text.length > 80 ? '...' : ''}</div>`
+    ).join('');
+    const ideasDiv = document.createElement('div');
+    ideasDiv.className = 'ideas-panel';
+    ideasDiv.innerHTML = '<div class="ideas-label">BANKED IDEAS</div>' + ideasHtml;
+    document.getElementById('chat-messages').appendChild(ideasDiv);
+  }
   
   systemContext = `You are Jarvis, a personal AI assistant helping with a project called "${currentThread['Thread name']}".
 
@@ -147,35 +159,83 @@ function backToDashboard() {
 
 async function saveIdea(transcript) {
   if (!currentThread) {
-    addMessage('assistant', "I need to be in a thread to save an idea. Open a project first.");
+    addMessage('assistant', "Open a project first.");
     return;
   }
-  
   const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
   const ideaText = recentContext || transcript;
-  
   const { error } = await db.from('Ideas').insert([{
     Thread_id: currentThread.id,
     idea_text: ideaText
   }]);
-  
   if (error) {
     addMessage('assistant', 'Error saving idea: ' + error.message);
   } else {
-    addMessage('assistant', 'Banked. I saved that idea.');
+    addMessage('assistant', 'Banked.');
+  }
+}
+
+async function saveProgress() {
+  if (!currentThread) return;
+  const summary = chatHistory.slice(-6).map(m => (m.role === 'user' ? 'Me: ' : 'Jarvis: ') + m.content).join('\n');
+  const newProgress = (currentThread['Current progress'] || '') + '\n\n[Session ' + new Date().toLocaleDateString() + ']\n' + summary;
+  const { error } = await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', currentThread.id);
+  if (error) {
+    addMessage('assistant', 'Error saving progress: ' + error.message);
+  } else {
+    currentThread['Current progress'] = newProgress;
+    addMessage('assistant', 'Progress saved to this thread.');
+  }
+}
+
+function openEditThread() {
+  if (!currentThread) return;
+  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('edit-thread-view').style.display = 'block';
+  document.getElementById('et-name').value = currentThread['Thread name'] || '';
+  document.getElementById('et-status').value = currentThread['Status'] || 'Active';
+  document.getElementById('et-goal').value = currentThread['Goal'] || '';
+  document.getElementById('et-progress').value = currentThread['Current progress'] || '';
+  document.getElementById('et-nextstep').value = currentThread['Next step'] || '';
+  document.getElementById('et-decisions').value = currentThread['Decisions made'] || '';
+  document.getElementById('et-questions').value = currentThread['Open question'] || '';
+  document.getElementById('et-notes').value = currentThread['Note'] || '';
+}
+
+function closeEditThread() {
+  document.getElementById('edit-thread-view').style.display = 'none';
+  document.getElementById('chat-view').style.display = 'flex';
+}
+
+async function saveEditThread() {
+  const updates = {
+    'Thread name': document.getElementById('et-name').value.trim(),
+    'Status': document.getElementById('et-status').value,
+    'Goal': document.getElementById('et-goal').value.trim(),
+    'Current progress': document.getElementById('et-progress').value.trim(),
+    'Next step': document.getElementById('et-nextstep').value.trim(),
+    'Decisions made': document.getElementById('et-decisions').value.trim(),
+    'Open question': document.getElementById('et-questions').value.trim(),
+    'Note': document.getElementById('et-notes').value.trim(),
+  };
+  const { error } = await db.from('Threads').update(updates).eq('id', currentThread.id);
+  if (error) {
+    alert('Error: ' + error.message);
+  } else {
+    Object.assign(currentThread, updates);
+    closeEditThread();
+    addMessage('assistant', 'Thread updated.');
   }
 }
 
 async function switchToProject(name) {
   const result = await db.from('Threads').select('*');
   if (!result.data) return;
-  const match = result.data.find(t => 
-    t['Thread name'].toLowerCase().includes(name)
-  );
+  const match = result.data.find(t => t['Thread name'].toLowerCase().includes(name));
   if (match) {
     openThread(match.id);
   } else {
-    addMessage('assistant', `I couldn't find a project called "${name}". Check the dashboard for your project names.`);
+    addMessage('assistant', `Couldn't find "${name}". Check your dashboard.`);
   }
 }
 
@@ -192,12 +252,7 @@ function closeNewThreadForm() {
 async function saveNewThread() {
   const name = document.getElementById('nt-name').value.trim();
   const goal = document.getElementById('nt-goal').value.trim();
-  
-  if (!name || !goal) {
-    alert('Thread name and goal are required.');
-    return;
-  }
-
+  if (!name || !goal) { alert('Name and goal are required.'); return; }
   const newThread = {
     'Thread name': name,
     'platform': document.getElementById('nt-platform').value,
@@ -209,18 +264,11 @@ async function saveNewThread() {
     'Open question': document.getElementById('nt-questions').value.trim(),
     'Note': document.getElementById('nt-notes').value.trim(),
   };
-
   const { error } = await db.from('Threads').insert([newThread]);
-  
-  if (error) {
-    alert('Error saving thread: ' + error.message);
-    return;
-  }
-
+  if (error) { alert('Error: ' + error.message); return; }
   ['nt-name','nt-goal','nt-progress','nt-nextstep','nt-decisions','nt-questions','nt-notes'].forEach(id => {
     document.getElementById(id).value = '';
   });
-
   closeNewThreadForm();
   loadThreads();
 }
@@ -235,30 +283,27 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   recognition.lang = 'en-US';
 
   recognition.onresult = function(event) {
-    let interim = '';
-    let final = '';
+    let interim = '', final = '';
     for (let i = event.resultIndex; i < event.results.length; i++) {
-      if (event.results[i].isFinal) {
-        final += event.results[i][0].transcript;
-      } else {
-        interim += event.results[i][0].transcript;
-      }
+      if (event.results[i].isFinal) final += event.results[i][0].transcript;
+      else interim += event.results[i][0].transcript;
     }
     const textarea = document.getElementById('chat-input');
     textarea.value = final || interim;
     textarea.scrollTop = textarea.scrollHeight;
-    
     if (final) {
       const transcript = final.toLowerCase().trim();
       textarea.value = '';
-      
       if (transcript.startsWith('project ')) {
-        const projectName = transcript.replace('project ', '').trim();
-        switchToProject(projectName);
+        switchToProject(transcript.replace('project ', '').trim());
       } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
         openNewThreadForm();
-      } else if (transcript.includes('bank that') || transcript.includes('save that') || transcript.includes('save this idea') || transcript.includes('remember that') || transcript.includes('hold that')) {
+      } else if (transcript.includes('bank that') || transcript.includes('save that') || transcript.includes('remember that') || transcript.includes('hold that')) {
         saveIdea(transcript);
+      } else if (transcript.includes('save progress') || transcript.includes('save session')) {
+        saveProgress();
+      } else if (transcript.includes('edit thread') || transcript.includes('update thread')) {
+        openEditThread();
       } else {
         textarea.value = final.trim();
         sendMessage();
@@ -266,48 +311,31 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     }
   };
 
-  recognition.onerror = function() {
-    isListening = false;
-    micBtn.textContent = '🎤';
-  };
-
+  recognition.onerror = function() { isListening = false; micBtn.textContent = '🎤'; };
   recognition.onend = function() {
-    if (isListening) {
-      setTimeout(() => { if (isListening) recognition.start(); }, 300);
-    } else {
-      micBtn.textContent = '🎤';
-    }
+    if (isListening) setTimeout(() => { if (isListening) recognition.start(); }, 300);
+    else micBtn.textContent = '🎤';
   };
 
   micBtn.addEventListener('click', function() {
     if (!audioEnabled) {
-      audioEnabled = true;
-      isListening = true;
-      micBtn.textContent = '🔴';
-      const utterance = new SpeechSynthesisUtterance('Jarvis listening.');
-      window.speechSynthesis.speak(utterance);
+      audioEnabled = true; isListening = true; micBtn.textContent = '🔴';
+      const u = new SpeechSynthesisUtterance('Jarvis listening.');
+      window.speechSynthesis.speak(u);
       recognition.start();
     } else if (isListening) {
-      isListening = false;
-      recognition.stop();
-      micBtn.textContent = '🎤';
+      isListening = false; recognition.stop(); micBtn.textContent = '🎤';
     } else {
-      isListening = true;
-      micBtn.textContent = '🔴';
-      recognition.start();
+      isListening = true; micBtn.textContent = '🔴'; recognition.start();
     }
   });
-
 } else {
   micBtn.style.opacity = '0.3';
 }
 
 document.getElementById('send-btn').addEventListener('click', sendMessage);
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
 });
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
 
