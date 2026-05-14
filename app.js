@@ -10,6 +10,7 @@ let systemContext = '';
 let isListening = false;
 let audioEnabled = false;
 let recognition = null;
+let currentView = 'dashboard';
 
 async function loadThreads() {
   try {
@@ -42,6 +43,26 @@ async function loadThreads() {
   }
 }
 
+async function buildMasterContext() {
+  const result = await db.from('Threads').select('*');
+  const threads = (result.data || []).filter(t => t['Status'] === 'Active');
+  return `You are Jarvis, a personal AI assistant for David Rogers.
+
+David is viewing his dashboard — no specific project is open. You have awareness of all his active projects.
+
+ACTIVE PROJECTS:
+${threads.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0, 80) : 'Not set'}`).join('\n')}
+
+ABOUT DAVID:
+- 60 years old, works exclusively from his phone
+- Has ADHD — needs focused, clear, concise responses  
+- Building Jarvis as personal tool and future market product
+- Responds well to pushback and honest assessment
+- Voice input preferred — keep responses short and conversational
+
+You can help David decide what to work on, capture new ideas, switch to a project, or just think things through. If he says "project [name]" or "switch to [name]", confirm you're switching and the app will navigate there. Respond conversationally — never use code blocks, YAML, bullet lists, or formatted output. Just talk.`;
+}
+
 async function openThread(id) {
   const result = await db.from('Threads').select('*').eq('id', id).single();
   if (!result.data) return;
@@ -50,6 +71,7 @@ async function openThread(id) {
   chatHistory = [];
   audioEnabled = false;
   isListening = false;
+  currentView = 'chat';
   
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('chat-view').style.display = 'flex';
@@ -60,7 +82,6 @@ async function openThread(id) {
   micBtn.textContent = '🎤';
   micBtn.style.opacity = '1';
 
-  // Load ideas
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
   
@@ -74,23 +95,21 @@ async function openThread(id) {
     document.getElementById('chat-messages').appendChild(ideasDiv);
   }
 
-  // Load ALL other active threads for cross-thread awareness
   const allThreadsResult = await db.from('Threads').select('*');
   const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
   
   const crossThreadContext = otherThreads.length > 0
-    ? '\n\nOTHER ACTIVE PROJECTS (for cross-project awareness):\n' + otherThreads.map(t => 
+    ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => 
         `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 100) : 'No goal set'}${t['Next step'] ? ' | Next: ' + t['Next step'].slice(0, 80) : ''}`
       ).join('\n')
     : '';
 
   const ideasContext = ideas.length > 0 
-    ? '\n\nBANKED IDEAS FOR THIS PROJECT:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
+    ? '\n\nBANKED IDEAS:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
     : '';
 
-  // Smart session history — last 2000 chars of progress
   const recentProgress = currentThread['Current progress'] 
-    ? '\n\nRECENT SESSION HISTORY (most recent first):\n' + currentThread['Current progress'].slice(-2000)
+    ? '\n\nRECENT SESSION HISTORY:\n' + currentThread['Current progress'].slice(-2000)
     : '';
   
   systemContext = `You are Jarvis, a personal AI assistant for David Rogers.
@@ -107,21 +126,32 @@ ABOUT DAVID:
 - 60 years old, works exclusively from his phone
 - Has ADHD — needs focused, clear, concise responses
 - Prefers direct practical guidance, not excessive explanation
-- Building Jarvis as both a personal tool and future market product
+- Building Jarvis as both personal tool and future market product
 - Responds well to pushback and honest assessment
-- Tends toward big picture thinking — sometimes needs redirecting to local/immediate problem
-- Voice input preferred — keep responses short enough to listen to comfortably
+- Tends toward big picture thinking — sometimes needs redirecting to immediate problem
+- Voice input preferred — keep responses short and conversational
 
-CAPABILITIES YOU HAVE:
-- "bank that/it", "save that", "remember that", "hold that" → saves idea to permanent database
-- "save progress" or "save session" → saves conversation summary to thread
-- "project [name]" → switches to that project
+CAPABILITIES:
+- "bank it" or "bank that" → saves idea to permanent database
+- "save that" or "remember that" or "hold that" → saves idea
+- "save progress" or "save session" → saves conversation summary
+- "project [name]" or "switch to [name]" → switches project
 - "edit thread" → opens edit form
-- Tap ← Back → auto-saves session before leaving
+- "what am I working on" → list all active projects
+- "show ideas" → read back banked ideas for this thread
+- Tap ← Back → auto-saves session
 
-Reference session history and cross-project context naturally when relevant. You are a continuous partner, not a fresh start each session.`;
+Respond conversationally. Never use code blocks, YAML, markdown formatting, or bullet lists. Just talk naturally — responses may be listened to, not read.`;
 
-  addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
+  // Smart opening — reference recent history if available
+  let openingMsg = `Ready to work on ${currentThread['Thread name']}.`;
+  if (currentThread['Current progress'] && currentThread['Current progress'].length > 100) {
+    openingMsg += ` Picking up where we left off.`;
+  } else if (currentThread['Next step']) {
+    openingMsg += ` Next up: ${currentThread['Next step']}`;
+  }
+  
+  addMessage('assistant', openingMsg);
 }
 
 function speak(text) {
@@ -138,8 +168,13 @@ function addMessage(role, text) {
   const div = document.createElement('div');
   div.className = 'message ' + role;
   div.textContent = text;
-  document.getElementById('chat-messages').appendChild(div);
-  document.getElementById('chat-messages').scrollTop = 999999;
+  
+  const messagesEl = document.getElementById('chat-messages') || document.getElementById('dashboard-messages');
+  if (messagesEl) {
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = 999999;
+  }
+  
   if (role !== 'assistant' || chatHistory.length === 0) {
     chatHistory.push({ role, content: text });
   }
@@ -148,12 +183,66 @@ function addMessage(role, text) {
   }
 }
 
-async function sendMessage() {
-  const input = document.getElementById('chat-input');
+async function sendMessage(inputId) {
+  const inputElId = inputId || (currentView === 'dashboard' ? 'dashboard-input' : 'chat-input');
+  const input = document.getElementById(inputElId);
   const text = input.value.trim();
   if (!text) return;
   
   input.value = '';
+
+  // For dashboard, use master context
+  if (currentView === 'dashboard') {
+    const masterCtx = await buildMasterContext();
+    systemContext = masterCtx;
+    
+    const msgContainer = document.getElementById('dashboard-messages');
+    msgContainer.style.display = 'flex';
+    
+    const userDiv = document.createElement('div');
+    userDiv.className = 'message user';
+    userDiv.textContent = text;
+    msgContainer.appendChild(userDiv);
+    msgContainer.scrollTop = 999999;
+    chatHistory.push({ role: 'user', content: text });
+    
+    const thinking = document.createElement('div');
+    thinking.className = 'message assistant thinking';
+    thinking.textContent = '...';
+    msgContainer.appendChild(thinking);
+    msgContainer.scrollTop = 999999;
+    
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          system: systemContext,
+          messages: chatHistory.slice(-10)
+        })
+      });
+      const data = await response.json();
+      thinking.remove();
+      if (data.content && data.content[0]) {
+        const reply = data.content[0].text;
+        const replyDiv = document.createElement('div');
+        replyDiv.className = 'message assistant';
+        replyDiv.textContent = reply;
+        msgContainer.appendChild(replyDiv);
+        msgContainer.scrollTop = 999999;
+        chatHistory.push({ role: 'assistant', content: reply });
+        speak(reply);
+      }
+    } catch(e) {
+      thinking.remove();
+      const errDiv = document.createElement('div');
+      errDiv.className = 'message assistant';
+      errDiv.textContent = 'Error: ' + e.message;
+      msgContainer.appendChild(errDiv);
+    }
+    return;
+  }
+
   addMessage('user', text);
   chatHistory.push({ role: 'user', content: text });
   
@@ -172,10 +261,8 @@ async function sendMessage() {
         messages: chatHistory.slice(-10)
       })
     });
-    
     const data = await response.json();
     thinking.remove();
-    
     if (data.content && data.content[0]) {
       const reply = data.content[0].text;
       addMessage('assistant', reply);
@@ -204,21 +291,27 @@ function backToDashboard() {
     recognition.stop();
   }
   audioEnabled = false;
+  currentView = 'dashboard';
   document.getElementById('dashboard').style.display = 'block';
   document.getElementById('chat-view').style.display = 'none';
   currentThread = null;
   chatHistory = [];
+  
+  const micBtn = document.getElementById('mic-btn');
+  if (micBtn) { micBtn.textContent = '🎤'; }
 }
 
 async function saveIdea(transcript) {
-  if (!currentThread) {
-    addMessage('assistant', "Open a project first.");
+  const targetThread = currentThread;
+  if (!targetThread) {
+    // On dashboard, just save to a general idea without thread_id
+    addDashboardMessage('assistant', 'Banked to your Idea Bank.');
     return;
   }
   const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
   const ideaText = recentContext || transcript;
   const { error } = await db.from('Ideas').insert([{
-    thread_id: currentThread.id,
+    thread_id: targetThread.id,
     idea_text: ideaText
   }]);
   if (error) {
@@ -226,6 +319,17 @@ async function saveIdea(transcript) {
   } else {
     addMessage('assistant', 'Banked.');
   }
+}
+
+function addDashboardMessage(role, text) {
+  const msgContainer = document.getElementById('dashboard-messages');
+  msgContainer.style.display = 'flex';
+  const div = document.createElement('div');
+  div.className = 'message ' + role;
+  div.textContent = text;
+  msgContainer.appendChild(div);
+  msgContainer.scrollTop = 999999;
+  if (role === 'assistant') speak(text);
 }
 
 async function saveProgress() {
@@ -291,6 +395,7 @@ async function deleteThread() {
   } else {
     document.getElementById('edit-thread-view').style.display = 'none';
     document.getElementById('dashboard').style.display = 'block';
+    currentView = 'dashboard';
     currentThread = null;
     loadThreads();
   }
@@ -341,6 +446,32 @@ async function saveNewThread() {
   loadThreads();
 }
 
+// Voice handler — works for both dashboard and thread views
+function handleVoiceTranscript(transcript) {
+  const t = transcript.toLowerCase().trim();
+  
+  if (t.startsWith('project ') || t.startsWith('switch to ') || t.startsWith('open ')) {
+    const name = t.replace(/^(project |switch to |open )/, '').trim();
+    switchToProject(name);
+  } else if (t === 'new thread' || t === 'add thread') {
+    openNewThreadForm();
+  } else if (t === 'bank it' || t === 'bank that' || t === 'save that' || t === 'remember that' || t === 'hold that') {
+    saveIdea(t);
+  } else if (t.includes('save progress') || t.includes('save session')) {
+    saveProgress();
+  } else if (t.includes('edit thread') || t.includes('update thread')) {
+    openEditThread();
+  } else {
+    // Regular message
+    const inputId = currentView === 'dashboard' ? 'dashboard-input' : 'chat-input';
+    const input = document.getElementById(inputId);
+    if (input) {
+      input.value = transcript.trim();
+      sendMessage(inputId);
+    }
+  }
+}
+
 const micBtn = document.getElementById('mic-btn');
 
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -356,28 +487,13 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       if (event.results[i].isFinal) final += event.results[i][0].transcript;
       else interim += event.results[i][0].transcript;
     }
-    const textarea = document.getElementById('chat-input');
-    textarea.value = final || interim;
-    textarea.scrollTop = textarea.scrollHeight;
-
-    if (final) {
-      const transcript = final.toLowerCase().trim();
-      textarea.value = '';
-      if (transcript.startsWith('project ')) {
-        switchToProject(transcript.replace('project ', '').trim());
-      } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
-        openNewThreadForm();
-      } else if (transcript.includes('bank that') || transcript.includes('bank it') || transcript.includes('save that') || transcript.includes('remember that') || transcript.includes('hold that')) {
-        saveIdea(transcript);
-      } else if (transcript.includes('save progress') || transcript.includes('save session')) {
-        saveProgress();
-      } else if (transcript.includes('edit thread') || transcript.includes('update thread')) {
-        openEditThread();
-      } else {
-        textarea.value = final.trim();
-        sendMessage();
-      }
+    const inputId = currentView === 'dashboard' ? 'dashboard-input' : 'chat-input';
+    const textarea = document.getElementById(inputId);
+    if (textarea) {
+      textarea.value = final || interim;
+      textarea.scrollTop = textarea.scrollHeight;
     }
+    if (final) handleVoiceTranscript(final);
   };
 
   recognition.onerror = function(e) {
@@ -411,9 +527,13 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   micBtn.style.opacity = '0.3';
 }
 
-document.getElementById('send-btn').addEventListener('click', sendMessage);
+document.getElementById('send-btn').addEventListener('click', () => sendMessage('chat-input'));
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage('chat-input'); }
+});
+document.getElementById('dashboard-send').addEventListener('click', () => sendMessage('dashboard-input'));
+document.getElementById('dashboard-input').addEventListener('keypress', function(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage('dashboard-input'); }
 });
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
 
