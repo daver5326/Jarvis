@@ -54,15 +54,22 @@ async function openThread(id) {
 
   // Load and display banked ideas
   const ideasResult = await db.from('Ideas').select('*').eq('Thread_id', id);
-  if (ideasResult.data && ideasResult.data.length > 0) {
-    const ideasHtml = ideasResult.data.map(idea => 
-      `<div class="idea-chip">💡 ${idea.idea_text.slice(0, 80)}${idea.idea_text.length > 80 ? '...' : ''}</div>`
+  const ideas = ideasResult.data || [];
+  
+  if (ideas.length > 0) {
+    const ideasHtml = ideas.map(idea => 
+      `<div class="idea-chip">💡 ${idea.idea_text.slice(0, 100)}${idea.idea_text.length > 100 ? '...' : ''}</div>`
     ).join('');
     const ideasDiv = document.createElement('div');
     ideasDiv.className = 'ideas-panel';
-    ideasDiv.innerHTML = '<div class="ideas-label">BANKED IDEAS</div>' + ideasHtml;
+    ideasDiv.innerHTML = '<div class="ideas-label">BANKED IDEAS (' + ideas.length + ')</div>' + ideasHtml;
     document.getElementById('chat-messages').appendChild(ideasDiv);
   }
+
+  // Build ideas context for system prompt
+  const ideasContext = ideas.length > 0 
+    ? '\n\nBANKED IDEAS FOR THIS PROJECT:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
+    : '';
   
   systemContext = `You are Jarvis, a personal AI assistant helping with a project called "${currentThread['Thread name']}".
 
@@ -72,9 +79,15 @@ Progress: ${currentThread['Current progress']}
 Next Steps: ${currentThread['Next step']}
 Decisions Made: ${currentThread['Decisions made']}
 Open Questions: ${currentThread['Open question']}
-Notes: ${currentThread['Note']}
+Notes: ${currentThread['Note']}${ideasContext}
 
-The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Get straight to helping them make progress. Keep responses concise and conversational since they may be listening rather than reading.`;
+IMPORTANT CAPABILITIES:
+- If the user says "bank that", "save that", "remember that", or "hold that" — you should confirm you're saving the idea to their permanent database for this project.
+- If the user says "save progress" or "save session" — confirm you're saving a summary of this conversation to the thread.
+- If the user says "project [name]" — you'll switch to that project.
+- If the user says "edit thread" — the edit form will open.
+
+The user works exclusively from their phone. They prefer direct, practical guidance. They have ADHD and benefit from focused, clear responses. Keep responses concise and conversational — they may be listening rather than reading. Get straight to helping them make progress.`;
 
   addMessage('assistant', `Ready to work on ${currentThread['Thread name']}. ${currentThread['Next step'] ? 'Next up: ' + currentThread['Next step'] : 'What would you like to tackle?'}`);
 }
@@ -184,7 +197,7 @@ async function saveProgress() {
     addMessage('assistant', 'Error saving progress: ' + error.message);
   } else {
     currentThread['Current progress'] = newProgress;
-    addMessage('assistant', 'Progress saved to this thread.');
+    addMessage('assistant', 'Progress saved.');
   }
 }
 
@@ -278,9 +291,11 @@ const micBtn = document.getElementById('mic-btn');
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SpeechRecognition();
-  recognition.continuous = false;
+  recognition.continuous = true;
   recognition.interimResults = true;
   recognition.lang = 'en-US';
+
+  let silenceTimer = null;
 
   recognition.onresult = function(event) {
     let interim = '', final = '';
@@ -289,32 +304,46 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
       else interim += event.results[i][0].transcript;
     }
     const textarea = document.getElementById('chat-input');
-    textarea.value = final || interim;
+    if (interim) textarea.value = interim;
     textarea.scrollTop = textarea.scrollHeight;
+
     if (final) {
+      clearTimeout(silenceTimer);
+      textarea.value = final.trim();
       const transcript = final.toLowerCase().trim();
-      textarea.value = '';
-      if (transcript.startsWith('project ')) {
-        switchToProject(transcript.replace('project ', '').trim());
-      } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
-        openNewThreadForm();
-      } else if (transcript.includes('bank that') || transcript.includes('save that') || transcript.includes('remember that') || transcript.includes('hold that')) {
-        saveIdea(transcript);
-      } else if (transcript.includes('save progress') || transcript.includes('save session')) {
-        saveProgress();
-      } else if (transcript.includes('edit thread') || transcript.includes('update thread')) {
-        openEditThread();
-      } else {
-        textarea.value = final.trim();
-        sendMessage();
-      }
+
+      silenceTimer = setTimeout(() => {
+        textarea.value = '';
+        if (transcript.startsWith('project ')) {
+          switchToProject(transcript.replace('project ', '').trim());
+        } else if (transcript.includes('new thread') || transcript.includes('add thread')) {
+          openNewThreadForm();
+        } else if (transcript.includes('bank that') || transcript.includes('save that') || transcript.includes('remember that') || transcript.includes('hold that')) {
+          saveIdea(transcript);
+        } else if (transcript.includes('save progress') || transcript.includes('save session')) {
+          saveProgress();
+        } else if (transcript.includes('edit thread') || transcript.includes('update thread')) {
+          openEditThread();
+        } else {
+          sendMessage();
+        }
+      }, 800);
     }
   };
 
-  recognition.onerror = function() { isListening = false; micBtn.textContent = '🎤'; };
+  recognition.onerror = function(e) {
+    if (e.error !== 'no-speech') {
+      isListening = false;
+      micBtn.textContent = '🎤';
+    }
+  };
+
   recognition.onend = function() {
-    if (isListening) setTimeout(() => { if (isListening) recognition.start(); }, 300);
-    else micBtn.textContent = '🎤';
+    if (isListening) {
+      setTimeout(() => { if (isListening) recognition.start(); }, 300);
+    } else {
+      micBtn.textContent = '🎤';
+    }
   };
 
   micBtn.addEventListener('click', function() {
