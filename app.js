@@ -1,4 +1,4 @@
-const SUPABASE_URL = 'https://jbsocnomwxodqyhiukcl.supabase.co';
+const SUPABASE_URL = 'https://jbsocnomwxovqyhiukcl.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impic29jbm9td3hvZHF5aGl1a2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyNjQ5NTUsImV4cCI6MjA5Mzg0MDk1NX0.ehX6AEqpSpVAF9Q3UxIabZXdZKLDqKKP9KL3pDIPhHE';
 
 const { createClient } = supabase;
@@ -12,6 +12,8 @@ let audioEnabled = false;
 let recognition = null;
 let currentView = 'dashboard';
 let davidProfile = null;
+
+// ─── DAVID PROFILE ───────────────────────────────────────────────────────────
 
 async function loadDavidProfile() {
   try {
@@ -54,143 +56,250 @@ async function updateDavidProfile(sessionSummary) {
   } catch(e) {}
 }
 
+// ─── THREADS / DASHBOARD ─────────────────────────────────────────────────────
+
+const TRIAGE_DAYS = 14;
+
+function isInTriage(thread) {
+  if (thread['Status'] !== 'Active') return false;
+  const progress = thread['Current progress'] || '';
+  const lastSaved = progress.match(/\[(?:Auto-saved|Session) ([^\]]+)\]/g);
+  if (!lastSaved) return false;
+  const lastEntry = lastSaved[lastSaved.length - 1];
+  const dateStr = lastEntry.replace(/\[(?:Auto-saved|Session) /, '').replace(']', '').split(' ')[0];
+  const lastDate = new Date(dateStr);
+  if (isNaN(lastDate)) return false;
+  const daysSince = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+  return daysSince >= TRIAGE_DAYS;
+}
+
 async function loadThreads() {
   try {
     const result = await db.from('Threads').select('*');
     if (result.error) throw result.error;
-    if (result.data && result.data.length > 0) {
-      const sorted = result.data.sort((a, b) => {
-        const order = { 'Active': 0, 'Paused': 1, 'Complete': 2 };
-        return (order[a['Status']] || 0) - (order[b['Status']] || 0);
-      });
-      const html = sorted.map(thread => {
-        const isComplete = thread['Status'] === 'Complete';
-        const isPaused = thread['Status'] === 'Paused';
-        return `<div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''}" onclick="openThread(${thread.id})">
-          <div class="platform-badge">${thread.platform || 'Claude'}</div>
-          <h2>${thread['Thread name']}</h2>
-          <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
-        </div>`;
-      }).join('');
-      document.getElementById('thread-list').innerHTML = html;
-    } else {
+    const threads = result.data || [];
+
+    if (threads.length === 0) {
       document.getElementById('thread-list').innerHTML = '<p class="loading">No threads yet. Tap + to add one.</p>';
+      return;
     }
+
+    const active = [];
+    const triage = [];
+    const other = [];
+
+    threads.forEach(t => {
+      if (t['Status'] === 'Active' && isInTriage(t)) {
+        triage.push(t);
+      } else if (t['Status'] === 'Active') {
+        active.push(t);
+      } else {
+        other.push(t);
+      }
+    });
+
+    const renderCard = (thread) => {
+      const isComplete = thread['Status'] === 'Complete';
+      const isPaused = thread['Status'] === 'Paused';
+      return `<div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''}" onclick="openThread(${thread.id})">
+        <div class="platform-badge">${thread.platform || 'Claude'}</div>
+        <h2>${thread['Thread name']}</h2>
+        <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
+      </div>`;
+    };
+
+    let html = '';
+
+    if (active.length > 0) {
+      html += active.map(renderCard).join('');
+    }
+
+    if (other.length > 0) {
+      html += other.map(renderCard).join('');
+    }
+
+    if (triage.length > 0) {
+      html += `<div class="triage-section">
+        <div class="triage-header">
+          <div class="triage-dot"></div>
+          <span class="triage-label">Triage</span>
+          <span class="triage-count">${triage.length}</span>
+        </div>
+        <p class="triage-desc">Inactive 14+ days — review, reactivate, or close.</p>
+        ${triage.map(t => `<div class="thread-card triage" onclick="openThread(${t.id})">
+          <div class="platform-badge">${t.platform || 'Claude'}</div>
+          <h2>${t['Thread name']}</h2>
+          <p class="thread-status">Triage · ${t['Next step'] ? t['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
+        </div>`).join('')}
+      </div>`;
+    }
+
+    document.getElementById('thread-list').innerHTML = html;
+
   } catch(e) {
     document.getElementById('thread-list').innerHTML = '<p class="loading">Error: ' + e.message + '</p>';
   }
 }
 
-async function buildMasterContext(threads) {
-  const active = threads.filter(t => t['Status'] === 'Active');
-  const davidCtx = buildDavidContext();
-  return `You are Jarvis, a personal AI partner for David Rogers. You are not an assistant — you are a thinking partner who knows David's work deeply.
+// ─── BOARD: INSTANT RENDER FROM THREAD DATA ──────────────────────────────────
 
-${davidCtx}
+function buildBoardFromThread(thread, ideas) {
+  const board = {};
 
-ACTIVE PROJECTS:
-${active.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0,120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0,80) : 'Not set'}`).join('\n')}
+  // Goal → Where We Are
+  if (thread['Goal']) {
+    board.where = thread['Goal'];
+  }
 
-You are on the dashboard — David's brainstorm and command space. Help him think, capture ideas, route them to the right project, or suggest new threads. Respond conversationally. Never use markdown, bullet lists, or code blocks. Keep it short and direct.`;
+  // Next Step → Moving
+  if (thread['Next step']) {
+    board.moving = [{
+      title: 'Next Step',
+      body: thread['Next step'],
+      tag: 'strategy',
+      why: 'This is the current priority.',
+      next: thread['Next step']
+    }];
+  }
+
+  // Open Questions → Blocked
+  if (thread['Open question']) {
+    const questions = thread['Open question'].split('\n').filter(q => q.trim());
+    board.blocked = questions.map(q => ({
+      title: q.slice(0, 60),
+      body: q,
+      tag: 'strategy',
+      why: 'Unresolved question blocking progress.',
+      next: 'Decide or research this.'
+    }));
+  }
+
+  // Decisions Made → Decided
+  if (thread['Decisions made']) {
+    const decisions = thread['Decisions made'].split('\n').filter(d => d.trim());
+    board.decided = decisions.map(d => ({
+      title: d.slice(0, 60),
+      body: d,
+      tag: 'strategy',
+      why: 'Decision locked in.',
+      next: 'Execute on this.'
+    }));
+  }
+
+  // Banked Ideas → Horizon
+  if (ideas && ideas.length > 0) {
+    board.horizon = ideas.slice(0, 4).map(i => ({
+      title: i.idea_text.slice(0, 55),
+      body: i.idea_text,
+      tag: 'strategy',
+      why: 'Banked for future consideration.',
+      next: 'Revisit when ready.'
+    }));
+  }
+
+  return board;
 }
 
-async function generateBoard(thread, ideas) {
-  const prompt = `You are Jarvis generating a status board for the project "${thread['Thread name']}".
+async function generateInsightCard(thread, ideas) {
+  const prompt = `You are Jarvis. One sharp insight about this project — one sentence connecting something here to a broader opportunity or risk. No preamble.
 
-Project data:
-Goal: ${thread['Goal'] || 'Not set'}
-Status: ${thread['Status'] || 'Active'}
-Next Steps: ${thread['Next step'] || 'Not set'}
-Decisions Made: ${thread['Decisions made'] || 'None recorded'}
-Open Questions: ${thread['Open question'] || 'None recorded'}
-Progress Notes: ${(thread['Current progress'] || '').slice(-1500)}
-Banked Ideas: ${ideas.map(i => i.idea_text).join(' | ') || 'None'}
-
-Generate a JSON status board with this exact structure:
-{
-  "where": "One clear sentence describing exactly where this project stands right now.",
-  "insight": "One sharp Jarvis observation connecting something in this project to a broader opportunity or risk.",
-  "moving": [{"title":"...","body":"...","tag":"code|design|strategy|content","why":"...","next":"..."}],
-  "blocked": [{"title":"...","body":"...","tag":"...","why":"...","next":"..."}],
-  "decided": [{"title":"...","body":"...","tag":"...","why":"...","next":"..."}],
-  "horizon": [{"title":"...","body":"...","tag":"...","why":"...","next":"..."}]
-}
-
-Only include zones that have items. Keep each card body to one sentence. Return ONLY valid JSON.`;
+Project: ${thread['Thread name']}
+Goal: ${thread['Goal'] || ''}
+Next Step: ${thread['Next step'] || ''}
+Open Questions: ${thread['Open question'] || ''}
+Decisions: ${thread['Decisions made'] || ''}
+Banked Ideas: ${(ideas || []).map(i => i.idea_text).join(' | ') || 'None'}`;
 
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system: 'You generate structured JSON status boards for project threads. Return only valid JSON, no markdown, no explanation.',
+        system: 'You generate one sharp insight sentence about a project. No markdown, no preamble, just the insight.',
         messages: [{ role: 'user', content: prompt }]
       })
     });
     const data = await response.json();
     if (data.content && data.content[0]) {
-      const raw = data.content[0].text.trim().replace(/```json|```/g, '');
-      const board = JSON.parse(raw);
-      renderBoard(board);
+      return data.content[0].text.trim();
     }
-  } catch(e) {
-    document.getElementById('board-content').innerHTML = '<p class="loading" style="color:rgba(240,180,41,0.7);">Board generation failed. Chat below still works.</p>';
-  }
+  } catch(e) {}
+  return null;
 }
 
 function renderBoard(board) {
   const zoneColors = { moving: '#34d399', blocked: '#f87171', decided: '#60a5fa', horizon: '#fbbf24' };
   const zoneLabels = { moving: 'Moving', blocked: 'Blocked', decided: 'Decided', horizon: 'Horizon' };
-  const zoneDots = { moving: 'green', blocked: 'red', decided: 'blue', horizon: 'amber' };
+  const zoneDots  = { moving: 'green',  blocked: 'red',     decided: 'blue',    horizon: 'amber'  };
+
   let html = '';
 
   if (board.where) {
     html += `<div class="where-card">
       <div class="zone-eyebrow">🧭 Where We Are</div>
       <div class="where-body">${board.where}</div>
-      <div class="where-ts">Updated by Jarvis · ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+      <div class="where-ts">Updated · ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
     </div>`;
   }
 
-  if (board.insight) {
-    html += `<div class="insight">
-      <div class="insight-icon">⚡</div>
-      <div>
-        <div class="insight-label">Jarvis Insight</div>
-        <div class="insight-text">${board.insight}</div>
-      </div>
-    </div>`;
-  }
+  // Insight placeholder — filled async
+  html += `<div class="insight" id="insight-card" style="opacity:0.35;">
+    <div class="insight-icon">⚡</div>
+    <div>
+      <div class="insight-label">Jarvis Insight</div>
+      <div class="insight-text" id="insight-text">Thinking...</div>
+    </div>
+  </div>`;
+
+  const hasContent = ['moving','blocked','decided','horizon'].some(z => board[z] && board[z].length > 0);
 
   ['moving','blocked','decided','horizon'].forEach(zone => {
     const cards = board[zone];
-    if (!cards || cards.length === 0) return;
     const color = zoneDots[zone];
     const label = zoneLabels[zone];
+
     html += `<div class="zone-section">
       <div class="zone-header">
         <div class="zone-dot ${color}"></div>
         <span class="zone-name ${color}">${label}</span>
-        <span class="zone-count ${color}">${cards.length}</span>
+        <span class="zone-count ${color}">${cards ? cards.length : 0}</span>
       </div>`;
-    cards.forEach(card => {
-      const t = (card.title||'').replace(/'/g,"\\'");
-      const b = (card.body||'').replace(/'/g,"\\'");
-      const w = (card.why||'').replace(/'/g,"\\'");
-      const n = (card.next||'').replace(/'/g,"\\'");
-      const c = zoneColors[zone];
-      html += `<div class="card ${color}" onclick="openCardDetail('${t}','${label}','${c}','${b}','${w}','${n}')">
-        <div class="card-title">${card.title}</div>
-        <div class="card-body">${card.body}</div>
-        <span class="card-tag tag-${card.tag||'strategy'}">${card.tag||'strategy'}</span>
-        <div class="card-arrow">›</div>
-      </div>`;
-    });
+
+    if (!cards || cards.length === 0) {
+      html += `<div class="card-empty">Nothing here yet</div>`;
+    } else {
+      cards.forEach(card => {
+        const t = (card.title||'').replace(/'/g,"\\'");
+        const b = (card.body||'').replace(/'/g,"\\'");
+        const w = (card.why||'').replace(/'/g,"\\'");
+        const n = (card.next||'').replace(/'/g,"\\'");
+        const c = zoneColors[zone];
+        html += `<div class="card ${color}" onclick="openCardDetail('${t}','${label}','${c}','${b}','${w}','${n}')">
+          <div class="card-title">${card.title}</div>
+          <div class="card-body">${card.body}</div>
+          <span class="card-tag tag-${card.tag||'strategy'}">${card.tag||'strategy'}</span>
+          <div class="card-arrow">›</div>
+        </div>`;
+      });
+    }
+
     html += `</div>`;
   });
 
   document.getElementById('board-content').innerHTML = html;
 }
+
+function injectInsight(text) {
+  const card = document.getElementById('insight-card');
+  const textEl = document.getElementById('insight-text');
+  if (card && textEl) {
+    textEl.textContent = text;
+    card.style.opacity = '1';
+    card.style.transition = 'opacity 0.5s ease';
+  }
+}
+
+// ─── CARD DETAIL OVERLAY ─────────────────────────────────────────────────────
 
 function openCardDetail(title, zone, color, body, why, next) {
   document.getElementById('ov-zone').textContent = zone;
@@ -206,6 +315,8 @@ function closeCardDetail() {
   document.getElementById('card-overlay').classList.remove('open');
 }
 
+// ─── OPEN THREAD ─────────────────────────────────────────────────────────────
+
 async function openThread(id) {
   const result = await db.from('Threads').select('*').eq('id', id).single();
   if (!result.data) return;
@@ -219,7 +330,7 @@ async function openThread(id) {
   document.getElementById('thread-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
-  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:30px;">Jarvis is building your board...</p>';
+  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading board...</p>';
 
   const micBtn = document.getElementById('mic-btn');
   micBtn.textContent = '🎤';
@@ -227,6 +338,21 @@ async function openThread(id) {
 
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
+
+  // ── Instant board render ──
+  const board = buildBoardFromThread(currentThread, ideas);
+  renderBoard(board);
+
+  // ── Async insight card ──
+  generateInsightCard(currentThread, ideas).then(insight => {
+    if (insight) injectInsight(insight);
+    else {
+      const card = document.getElementById('insight-card');
+      if (card) card.style.display = 'none';
+    }
+  });
+
+  // ── System context for chat ──
   const allThreadsResult = await db.from('Threads').select('*');
   const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
   const davidCtx = buildDavidContext();
@@ -257,11 +383,24 @@ Notes: ${currentThread['Note']}${recentProgress}${ideasContext}${crossThreadCont
 
 David is looking at the visual board for this project while chatting with you. Help him go deep on specific cards, make decisions, capture ideas, or take action. Keep responses short and conversational. No markdown.`;
 
-  generateBoard(currentThread, ideas);
-
   let openingMsg = `On ${currentThread['Thread name']}.`;
   if (currentThread['Next step']) openingMsg += ` Next up: ${currentThread['Next step']}`;
   addMessage('assistant', openingMsg);
+}
+
+// ─── CONTEXT / CHAT ──────────────────────────────────────────────────────────
+
+async function buildMasterContext(threads) {
+  const active = threads.filter(t => t['Status'] === 'Active');
+  const davidCtx = buildDavidContext();
+  return `You are Jarvis, a personal AI partner for David Rogers. You are not an assistant — you are a thinking partner who knows David's work deeply.
+
+${davidCtx}
+
+ACTIVE PROJECTS:
+${active.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0,120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0,80) : 'Not set'}`).join('\n')}
+
+You are on the dashboard — David's brainstorm and command space. Help him think, capture ideas, route them to the right project, or suggest new threads. Respond conversationally. Never use markdown, bullet lists, or code blocks. Keep it short and direct.`;
 }
 
 async function switchToProject(name) {
@@ -374,6 +513,8 @@ async function sendMessage(inputId) {
   }
 }
 
+// ─── SAVE / PROGRESS ─────────────────────────────────────────────────────────
+
 async function autoSaveProgress() {
   if (!currentThread || chatHistory.length < 3) return;
   const summary = chatHistory.slice(-8).map(m => (m.role === 'user' ? 'Me: ' : 'Jarvis: ') + m.content).join('\n');
@@ -398,6 +539,8 @@ async function saveIdea(transcript) {
   if (error) addMessage('assistant', 'Error saving idea: ' + error.message);
   else addMessage('assistant', 'Banked.');
 }
+
+// ─── NAVIGATION ──────────────────────────────────────────────────────────────
 
 function backToDashboard() {
   autoSaveProgress();
@@ -494,6 +637,8 @@ async function saveNewThread() {
   loadThreads();
 }
 
+// ─── GREETING ─────────────────────────────────────────────────────────────────
+
 async function greetOnLoad() {
   const result = await db.from('Threads').select('*');
   const threads = result.data || [];
@@ -526,6 +671,8 @@ async function greetOnLoad() {
     }
   } catch(e) {}
 }
+
+// ─── VOICE ───────────────────────────────────────────────────────────────────
 
 function handleVoiceTranscript(transcript) {
   const t = transcript.toLowerCase().trim();
@@ -591,6 +738,8 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   micBtn.style.opacity = '0.3';
 }
 
+// ─── EVENT LISTENERS ─────────────────────────────────────────────────────────
+
 document.getElementById('send-btn').addEventListener('click', () => sendMessage('chat-input'));
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage('chat-input'); }
@@ -600,6 +749,8 @@ document.getElementById('dashboard-input').addEventListener('keypress', function
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage('dashboard-input'); }
 });
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
+
+// ─── INIT ─────────────────────────────────────────────────────────────────────
 
 loadDavidProfile().then(() => {
   loadThreads().then(() => {
