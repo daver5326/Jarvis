@@ -13,25 +13,16 @@ let recognition = null;
 let currentView = 'dashboard';
 let davidProfile = null;
 
-// ─────────────────────────────────────────
-// LAYER 1: DAVID PROFILE
-// ─────────────────────────────────────────
-
 async function loadDavidProfile() {
   try {
     const result = await db.from('David').select('*').limit(1).single();
-    if (result.data) {
-      davidProfile = result.data;
-    }
-  } catch(e) {
-    davidProfile = null;
-  }
+    if (result.data) davidProfile = result.data;
+  } catch(e) { davidProfile = null; }
 }
 
 function buildDavidContext() {
   if (!davidProfile) return '';
-  return `
-WHO DAVID IS:
+  return `WHO DAVID IS:
 Personality: ${davidProfile.personality || ''}
 Work Style: ${davidProfile.work_style || ''}
 Values: ${davidProfile.values || ''}
@@ -47,33 +38,21 @@ async function updateDavidProfile(sessionSummary) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system: `You are a background observer. You have David's current profile and a session summary. 
-Your job: determine if the session revealed anything NEW about David's personality, patterns, work style, values, or focus.
-If yes, return a JSON object with only the fields that should change and their new complete values.
-If no meaningful update is needed, return an empty JSON object {}.
-Current profile: ${JSON.stringify(davidProfile)}
-Respond with ONLY valid JSON. No explanation, no markdown.`,
+        system: `You are a background observer. You have David's current profile and a session summary. Your job: determine if the session revealed anything NEW about David's personality, patterns, work style, values, or focus. If yes, return a JSON object with only the fields that should change and their new complete values. If no meaningful update is needed, return {}. Current profile: ${JSON.stringify(davidProfile)} Respond with ONLY valid JSON. No explanation, no markdown.`,
         messages: [{ role: 'user', content: `Session summary: ${sessionSummary}` }]
       })
     });
     const data = await response.json();
     if (data.content && data.content[0]) {
-      const raw = data.content[0].text.trim();
-      const updates = JSON.parse(raw);
+      const updates = JSON.parse(data.content[0].text.trim());
       if (Object.keys(updates).length > 0) {
         updates.last_updated = new Date().toISOString();
         await db.from('David').update(updates).eq('id', davidProfile.id);
         Object.assign(davidProfile, updates);
       }
     }
-  } catch(e) {
-    // Silent fail — profile update is background, never blocks user
-  }
+  } catch(e) {}
 }
-
-// ─────────────────────────────────────────
-// LAYER 2: PROJECT THREADS
-// ─────────────────────────────────────────
 
 async function loadThreads() {
   try {
@@ -87,127 +66,216 @@ async function loadThreads() {
       const html = sorted.map(thread => {
         const isComplete = thread['Status'] === 'Complete';
         const isPaused = thread['Status'] === 'Paused';
-        return `
-          <div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''}" onclick="openThread(${thread.id})">
-            <div class="platform-badge">${thread.platform || 'Claude'}</div>
-            <h2>${thread['Thread name']}</h2>
-            <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
-          </div>
-        `;
+        return `<div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''}" onclick="openThread(${thread.id})">
+          <div class="platform-badge">${thread.platform || 'Claude'}</div>
+          <h2>${thread['Thread name']}</h2>
+          <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
+        </div>`;
       }).join('');
       document.getElementById('thread-list').innerHTML = html;
     } else {
-      document.getElementById('thread-list').innerHTML =
-        '<p class="loading">No threads yet. Tap + to add one.</p>';
+      document.getElementById('thread-list').innerHTML = '<p class="loading">No threads yet. Tap + to add one.</p>';
     }
   } catch(e) {
-    document.getElementById('thread-list').innerHTML =
-      '<p class="loading">Error: ' + e.message + '</p>';
+    document.getElementById('thread-list').innerHTML = '<p class="loading">Error: ' + e.message + '</p>';
   }
 }
 
 async function buildMasterContext(threads) {
   const active = threads.filter(t => t['Status'] === 'Active');
   const davidCtx = buildDavidContext();
-  return `You are Jarvis, a personal AI partner for David Rogers. You are not an assistant — you are a thinking partner who knows David's work deeply and maintains continuity across all projects and sessions.
+  return `You are Jarvis, a personal AI partner for David Rogers. You are not an assistant — you are a thinking partner who knows David's work deeply.
 
 ${davidCtx}
 
 ACTIVE PROJECTS:
-${active.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0, 80) : 'Not set'}`).join('\n')}
+${active.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0,120) : 'No goal'} | Next: ${t['Next step'] ? t['Next step'].slice(0,80) : 'Not set'}`).join('\n')}
 
-Respond conversationally. Never use code blocks, YAML, bullet lists, or markdown. Just talk. Responses may be listened to, not read. Keep responses short and direct — David has ADHD and prefers concise, energetic communication.`;
+You are on the dashboard — David's brainstorm and command space. Help him think, capture ideas, route them to the right project, or suggest new threads. Respond conversationally. Never use markdown, bullet lists, or code blocks. Keep it short and direct.`;
 }
 
-// ─────────────────────────────────────────
-// LAYER 3: SESSION CONTEXT
-// ─────────────────────────────────────────
+async function generateBoard(thread, ideas) {
+  const prompt = `You are Jarvis generating a status board for the project "${thread['Thread name']}".
 
-async function buildThreadContext(thread, ideas, otherThreads) {
-  const davidCtx = buildDavidContext();
-  
-  const recentProgress = thread['Current progress']
-    ? '\n\nRECENT SESSION HISTORY:\n' + thread['Current progress'].slice(-2000)
-    : '';
+Project data:
+Goal: ${thread['Goal'] || 'Not set'}
+Status: ${thread['Status'] || 'Active'}
+Next Steps: ${thread['Next step'] || 'Not set'}
+Decisions Made: ${thread['Decisions made'] || 'None recorded'}
+Open Questions: ${thread['Open question'] || 'None recorded'}
+Progress Notes: ${(thread['Current progress'] || '').slice(-1500)}
+Banked Ideas: ${ideas.map(i => i.idea_text).join(' | ') || 'None'}
 
-  const ideasContext = ideas.length > 0
-    ? '\n\nBANKED IDEAS:\n' + ideas.map(i => '- ' + i.idea_text.slice(0, 200)).join('\n')
-    : '';
-
-  const crossThreadContext = otherThreads.length > 0
-    ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t =>
-        `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0, 100) : 'No goal set'}${t['Next step'] ? ' | Next: ' + t['Next step'].slice(0, 80) : ''}`
-      ).join('\n')
-    : '';
-
-  return `You are Jarvis, a personal AI partner for David Rogers. You are not an assistant — you are a thinking partner who knows David deeply and maintains full continuity across sessions.
-
-${davidCtx}
-
-CURRENT PROJECT: "${thread['Thread name']}"
-Goal: ${thread['Goal']}
-Status: ${thread['Status']}
-Next Steps: ${thread['Next step']}
-Decisions Made: ${thread['Decisions made']}
-Open Questions: ${thread['Open question']}
-Notes: ${thread['Note']}${recentProgress}${ideasContext}${crossThreadContext}
-
-CAPABILITIES (voice commands):
-- "bank it" / "bank that" / "save that" → saves idea
-- "save progress" / "save session" → saves conversation summary
-- "project [name]" / "switch to [name]" → switches project
-- "edit thread" → opens edit form
-- Tap Back → auto-saves session
-
-Respond conversationally. Never use markdown, bullet lists, or code blocks. Keep it short and direct. David has ADHD, works exclusively from his phone, prefers voice, and thinks big picture — redirect him to immediate next steps when needed.`;
+Generate a JSON status board with this exact structure:
+{
+  "where": "One clear sentence describing exactly where this project stands right now.",
+  "insight": "One sharp Jarvis observation connecting something in this project to a broader opportunity or risk.",
+  "moving": [{"title":"...","body":"...","tag":"code|design|strategy|content","why":"...","next":"..."}],
+  "blocked": [{"title":"...","body":"...","tag":"...","why":"...","next":"..."}],
+  "decided": [{"title":"...","body":"...","tag":"...","why":"...","next":"..."}],
+  "horizon": [{"title":"...","body":"...","tag":"...","why":"...","next":"..."}]
 }
 
-// ─────────────────────────────────────────
-// GREETING
-// ─────────────────────────────────────────
-
-async function greetOnLoad() {
-  const result = await db.from('Threads').select('*');
-  const threads = result.data || [];
-  const active = threads.filter(t => t['Status'] === 'Active');
-  if (active.length === 0) return;
-
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const suggested = active.find(t => t['Next step']) || active[0];
-  const masterCtx = await buildMasterContext(threads);
-  systemContext = masterCtx;
-  chatHistory = [];
-
-  const davidName = davidProfile ? 'David' : 'David';
-  const prompt = `${greeting} David. Give a brief, natural, conversational greeting. You know David well — make it feel personal, not generic. Mention his ${active.length} active projects. Suggest one specific thing to work on based on: "${suggested['Thread name']}" with next step: "${suggested['Next step'] || 'no next step set'}". 2-3 sentences max. Be direct and energetic.`;
+Only include zones that have items. Keep each card body to one sentence. Return ONLY valid JSON.`;
 
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system: masterCtx,
+        system: 'You generate structured JSON status boards for project threads. Return only valid JSON, no markdown, no explanation.',
         messages: [{ role: 'user', content: prompt }]
       })
     });
     const data = await response.json();
     if (data.content && data.content[0]) {
-      const msg = data.content[0].text;
-      showDashboardMessage('assistant', msg);
-      const utterance = new SpeechSynthesisUtterance(msg);
-      utterance.rate = 1.05;
-      window.speechSynthesis.speak(utterance);
-      chatHistory.push({ role: 'assistant', content: msg });
+      const raw = data.content[0].text.trim().replace(/```json|```/g, '');
+      const board = JSON.parse(raw);
+      renderBoard(board);
     }
   } catch(e) {
-    // Silent fail
+    document.getElementById('board-content').innerHTML = '<p class="loading" style="color:rgba(240,180,41,0.7);">Board generation failed. Chat below still works.</p>';
   }
 }
 
-// ─────────────────────────────────────────
-// UI HELPERS
-// ─────────────────────────────────────────
+function renderBoard(board) {
+  const zoneColors = { moving: '#34d399', blocked: '#f87171', decided: '#60a5fa', horizon: '#fbbf24' };
+  const zoneLabels = { moving: 'Moving', blocked: 'Blocked', decided: 'Decided', horizon: 'Horizon' };
+  const zoneDots = { moving: 'green', blocked: 'red', decided: 'blue', horizon: 'amber' };
+  let html = '';
+
+  if (board.where) {
+    html += `<div class="where-card">
+      <div class="zone-eyebrow">🧭 Where We Are</div>
+      <div class="where-body">${board.where}</div>
+      <div class="where-ts">Updated by Jarvis · ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
+    </div>`;
+  }
+
+  if (board.insight) {
+    html += `<div class="insight">
+      <div class="insight-icon">⚡</div>
+      <div>
+        <div class="insight-label">Jarvis Insight</div>
+        <div class="insight-text">${board.insight}</div>
+      </div>
+    </div>`;
+  }
+
+  ['moving','blocked','decided','horizon'].forEach(zone => {
+    const cards = board[zone];
+    if (!cards || cards.length === 0) return;
+    const color = zoneDots[zone];
+    const label = zoneLabels[zone];
+    html += `<div class="zone-section">
+      <div class="zone-header">
+        <div class="zone-dot ${color}"></div>
+        <span class="zone-name ${color}">${label}</span>
+        <span class="zone-count ${color}">${cards.length}</span>
+      </div>`;
+    cards.forEach(card => {
+      const t = (card.title||'').replace(/'/g,"\\'");
+      const b = (card.body||'').replace(/'/g,"\\'");
+      const w = (card.why||'').replace(/'/g,"\\'");
+      const n = (card.next||'').replace(/'/g,"\\'");
+      const c = zoneColors[zone];
+      html += `<div class="card ${color}" onclick="openCardDetail('${t}','${label}','${c}','${b}','${w}','${n}')">
+        <div class="card-title">${card.title}</div>
+        <div class="card-body">${card.body}</div>
+        <span class="card-tag tag-${card.tag||'strategy'}">${card.tag||'strategy'}</span>
+        <div class="card-arrow">›</div>
+      </div>`;
+    });
+    html += `</div>`;
+  });
+
+  document.getElementById('board-content').innerHTML = html;
+}
+
+function openCardDetail(title, zone, color, body, why, next) {
+  document.getElementById('ov-zone').textContent = zone;
+  document.getElementById('ov-zone').style.color = color;
+  document.getElementById('ov-title').textContent = title;
+  document.getElementById('ov-body').textContent = body;
+  document.getElementById('ov-why').textContent = why;
+  document.getElementById('ov-next').textContent = next;
+  document.getElementById('card-overlay').classList.add('open');
+}
+
+function closeCardDetail() {
+  document.getElementById('card-overlay').classList.remove('open');
+}
+
+async function openThread(id) {
+  const result = await db.from('Threads').select('*').eq('id', id).single();
+  if (!result.data) return;
+  currentThread = result.data;
+  chatHistory = [];
+  audioEnabled = false;
+  isListening = false;
+  currentView = 'thread';
+
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'flex';
+  document.getElementById('thread-title').textContent = currentThread['Thread name'];
+  document.getElementById('chat-messages').innerHTML = '';
+  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:30px;">Jarvis is building your board...</p>';
+
+  const micBtn = document.getElementById('mic-btn');
+  micBtn.textContent = '🎤';
+  micBtn.style.opacity = '1';
+
+  const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
+  const ideas = ideasResult.data || [];
+  const allThreadsResult = await db.from('Threads').select('*');
+  const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
+  const davidCtx = buildDavidContext();
+
+  const crossThreadContext = otherThreads.length > 0
+    ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0,100) : 'No goal'}${t['Next step'] ? ' | Next: ' + t['Next step'].slice(0,80) : ''}`).join('\n')
+    : '';
+
+  const ideasContext = ideas.length > 0
+    ? '\n\nBANKED IDEAS:\n' + ideas.map(i => '- ' + i.idea_text.slice(0,200)).join('\n')
+    : '';
+
+  const recentProgress = currentThread['Current progress']
+    ? '\n\nRECENT HISTORY:\n' + currentThread['Current progress'].slice(-2000)
+    : '';
+
+  systemContext = `You are Jarvis, a personal AI partner for David Rogers.
+
+${davidCtx}
+
+CURRENT PROJECT: "${currentThread['Thread name']}"
+Goal: ${currentThread['Goal']}
+Status: ${currentThread['Status']}
+Next Steps: ${currentThread['Next step']}
+Decisions Made: ${currentThread['Decisions made']}
+Open Questions: ${currentThread['Open question']}
+Notes: ${currentThread['Note']}${recentProgress}${ideasContext}${crossThreadContext}
+
+David is looking at the visual board for this project while chatting with you. Help him go deep on specific cards, make decisions, capture ideas, or take action. Keep responses short and conversational. No markdown.`;
+
+  generateBoard(currentThread, ideas);
+
+  let openingMsg = `On ${currentThread['Thread name']}.`;
+  if (currentThread['Next step']) openingMsg += ` Next up: ${currentThread['Next step']}`;
+  addMessage('assistant', openingMsg);
+}
+
+async function switchToProject(name) {
+  const result = await db.from('Threads').select('*');
+  if (!result.data) return;
+  const match = result.data.find(t => t['Thread name'].toLowerCase().includes(name));
+  if (match) {
+    openThread(match.id);
+  } else {
+    const msg = `Couldn't find "${name}". Your projects: ${(result.data||[]).map(t => t['Thread name']).join(', ')}`;
+    if (currentView === 'dashboard') showDashboardMessage('assistant', msg);
+    else addMessage('assistant', msg);
+  }
+}
 
 function showDashboardMessage(role, text) {
   const msgContainer = document.getElementById('dashboard-messages');
@@ -230,88 +298,16 @@ function addMessage(role, text) {
   if (role !== 'assistant' || chatHistory.length === 0) {
     chatHistory.push({ role, content: text });
   }
-  if (role === 'assistant' && text !== '...') {
-    speak(text);
-  }
+  if (role === 'assistant' && text !== '...') speak(text);
 }
 
 function speak(text) {
   if (!audioEnabled) return;
   window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.05;
-  utterance.pitch = 1.0;
-  utterance.volume = 1.0;
-  window.speechSynthesis.speak(utterance);
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.05; u.pitch = 1.0; u.volume = 1.0;
+  window.speechSynthesis.speak(u);
 }
-
-// ─────────────────────────────────────────
-// THREAD NAVIGATION
-// ─────────────────────────────────────────
-
-async function openThread(id) {
-  const result = await db.from('Threads').select('*').eq('id', id).single();
-  if (!result.data) return;
-
-  currentThread = result.data;
-  chatHistory = [];
-  audioEnabled = false;
-  isListening = false;
-  currentView = 'chat';
-
-  document.getElementById('dashboard').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'flex';
-  document.getElementById('thread-title').textContent = currentThread['Thread name'];
-  document.getElementById('chat-messages').innerHTML = '';
-
-  const micBtn = document.getElementById('mic-btn');
-  micBtn.textContent = '🎤';
-  micBtn.style.opacity = '1';
-
-  const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
-  const ideas = ideasResult.data || [];
-
-  if (ideas.length > 0) {
-    const ideasHtml = ideas.map(idea =>
-      `<div class="idea-chip">💡 ${idea.idea_text.slice(0, 100)}${idea.idea_text.length > 100 ? '...' : ''}</div>`
-    ).join('');
-    const ideasDiv = document.createElement('div');
-    ideasDiv.className = 'ideas-panel';
-    ideasDiv.innerHTML = '<div class="ideas-label">BANKED IDEAS (' + ideas.length + ')</div>' + ideasHtml;
-    document.getElementById('chat-messages').appendChild(ideasDiv);
-  }
-
-  const allThreadsResult = await db.from('Threads').select('*');
-  const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
-
-  systemContext = await buildThreadContext(currentThread, ideas, otherThreads);
-
-  let openingMsg = `Back on ${currentThread['Thread name']}.`;
-  if (currentThread['Current progress'] && currentThread['Current progress'].length > 100) {
-    openingMsg += ` Picking up where we left off.`;
-  } else if (currentThread['Next step']) {
-    openingMsg += ` Next up: ${currentThread['Next step']}`;
-  }
-
-  addMessage('assistant', openingMsg);
-}
-
-async function switchToProject(name) {
-  const result = await db.from('Threads').select('*');
-  if (!result.data) return;
-  const match = result.data.find(t => t['Thread name'].toLowerCase().includes(name));
-  if (match) {
-    openThread(match.id);
-  } else {
-    const msg = `Couldn't find "${name}". Your projects are: ${(result.data || []).map(t => t['Thread name']).join(', ')}`;
-    if (currentView === 'dashboard') showDashboardMessage('assistant', msg);
-    else addMessage('assistant', msg);
-  }
-}
-
-// ─────────────────────────────────────────
-// MESSAGING
-// ─────────────────────────────────────────
 
 async function sendMessage(inputId) {
   const inputElId = inputId || (currentView === 'dashboard' ? 'dashboard-input' : 'chat-input');
@@ -325,22 +321,17 @@ async function sendMessage(inputId) {
     systemContext = await buildMasterContext(allResult.data || []);
     showDashboardMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
-
     const thinking = document.createElement('div');
     thinking.className = 'message assistant thinking';
     thinking.textContent = '...';
     const msgContainer = document.getElementById('dashboard-messages');
     msgContainer.appendChild(thinking);
     msgContainer.scrollTop = 999999;
-
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          system: systemContext,
-          messages: chatHistory.slice(-10)
-        })
+        body: JSON.stringify({ system: systemContext, messages: chatHistory.slice(-10) })
       });
       const data = await response.json();
       thinking.remove();
@@ -359,21 +350,16 @@ async function sendMessage(inputId) {
 
   addMessage('user', text);
   chatHistory.push({ role: 'user', content: text });
-
   const thinking = document.createElement('div');
   thinking.className = 'message assistant thinking';
   thinking.textContent = '...';
   document.getElementById('chat-messages').appendChild(thinking);
   document.getElementById('chat-messages').scrollTop = 999999;
-
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system: systemContext,
-        messages: chatHistory.slice(-10)
-      })
+      body: JSON.stringify({ system: systemContext, messages: chatHistory.slice(-10) })
     });
     const data = await response.json();
     thinking.remove();
@@ -381,8 +367,6 @@ async function sendMessage(inputId) {
       const reply = data.content[0].text;
       addMessage('assistant', reply);
       chatHistory.push({ role: 'assistant', content: reply });
-    } else {
-      addMessage('assistant', 'Error: ' + JSON.stringify(data));
     }
   } catch(e) {
     thinking.remove();
@@ -390,16 +374,11 @@ async function sendMessage(inputId) {
   }
 }
 
-// ─────────────────────────────────────────
-// PROGRESS & IDEAS
-// ─────────────────────────────────────────
-
 async function autoSaveProgress() {
   if (!currentThread || chatHistory.length < 3) return;
   const summary = chatHistory.slice(-8).map(m => (m.role === 'user' ? 'Me: ' : 'Jarvis: ') + m.content).join('\n');
   const newProgress = (currentThread['Current progress'] || '') + '\n\n[Auto-saved ' + new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString() + ']\n' + summary;
   await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', currentThread.id);
-  // Background profile update
   updateDavidProfile(summary);
 }
 
@@ -408,48 +387,26 @@ async function saveProgress() {
   const summary = chatHistory.slice(-6).map(m => (m.role === 'user' ? 'Me: ' : 'Jarvis: ') + m.content).join('\n');
   const newProgress = (currentThread['Current progress'] || '') + '\n\n[Session ' + new Date().toLocaleDateString() + ']\n' + summary;
   const { error } = await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', currentThread.id);
-  if (error) {
-    addMessage('assistant', 'Error saving progress: ' + error.message);
-  } else {
-    currentThread['Current progress'] = newProgress;
-    addMessage('assistant', 'Progress saved.');
-    updateDavidProfile(summary);
-  }
+  if (error) { addMessage('assistant', 'Error saving: ' + error.message); }
+  else { currentThread['Current progress'] = newProgress; addMessage('assistant', 'Progress saved.'); updateDavidProfile(summary); }
 }
 
 async function saveIdea(transcript) {
-  if (!currentThread) {
-    showDashboardMessage('assistant', 'Open a project first, then I can bank that idea.');
-    return;
-  }
+  if (!currentThread) { showDashboardMessage('assistant', 'Open a project first.'); return; }
   const recentContext = chatHistory.slice(-4).map(m => m.content).join(' | ');
-  const ideaText = recentContext || transcript;
-  const { error } = await db.from('Ideas').insert([{
-    thread_id: currentThread.id,
-    idea_text: ideaText
-  }]);
-  if (error) {
-    addMessage('assistant', 'Error saving idea: ' + error.message);
-  } else {
-    addMessage('assistant', 'Banked.');
-  }
+  const { error } = await db.from('Ideas').insert([{ thread_id: currentThread.id, idea_text: recentContext || transcript }]);
+  if (error) addMessage('assistant', 'Error saving idea: ' + error.message);
+  else addMessage('assistant', 'Banked.');
 }
-
-// ─────────────────────────────────────────
-// NAVIGATION
-// ─────────────────────────────────────────
 
 function backToDashboard() {
   autoSaveProgress();
   window.speechSynthesis.cancel();
-  if (isListening && recognition) {
-    isListening = false;
-    recognition.stop();
-  }
+  if (isListening && recognition) { isListening = false; recognition.stop(); }
   audioEnabled = false;
   currentView = 'dashboard';
   document.getElementById('dashboard').style.display = 'block';
-  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'none';
   currentThread = null;
   chatHistory = [];
   const micBtn = document.getElementById('mic-btn');
@@ -468,7 +425,7 @@ function closeNewThreadForm() {
 
 function openEditThread() {
   if (!currentThread) return;
-  document.getElementById('chat-view').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'none';
   document.getElementById('edit-thread-view').style.display = 'block';
   document.getElementById('et-name').value = currentThread['Thread name'] || '';
   document.getElementById('et-status').value = currentThread['Status'] || 'Active';
@@ -482,7 +439,7 @@ function openEditThread() {
 
 function closeEditThread() {
   document.getElementById('edit-thread-view').style.display = 'none';
-  document.getElementById('chat-view').style.display = 'flex';
+  document.getElementById('thread-view').style.display = 'flex';
 }
 
 async function saveEditThread() {
@@ -497,28 +454,19 @@ async function saveEditThread() {
     'Note': document.getElementById('et-notes').value.trim(),
   };
   const { error } = await db.from('Threads').update(updates).eq('id', currentThread.id);
-  if (error) {
-    alert('Error: ' + error.message);
-  } else {
-    Object.assign(currentThread, updates);
-    closeEditThread();
-    addMessage('assistant', 'Thread updated.');
-  }
+  if (error) { alert('Error: ' + error.message); }
+  else { Object.assign(currentThread, updates); closeEditThread(); addMessage('assistant', 'Thread updated.'); }
 }
 
 async function deleteThread() {
   if (!currentThread) return;
-  const confirmed = confirm('Delete "' + currentThread['Thread name'] + '"? This cannot be undone.');
-  if (!confirmed) return;
+  if (!confirm('Delete "' + currentThread['Thread name'] + '"? Cannot be undone.')) return;
   const { error } = await db.from('Threads').delete().eq('id', currentThread.id);
-  if (error) {
-    alert('Error deleting: ' + error.message);
-  } else {
+  if (error) { alert('Error: ' + error.message); }
+  else {
     document.getElementById('edit-thread-view').style.display = 'none';
     document.getElementById('dashboard').style.display = 'block';
-    currentView = 'dashboard';
-    currentThread = null;
-    loadThreads();
+    currentView = 'dashboard'; currentThread = null; loadThreads();
   }
 }
 
@@ -546,18 +494,46 @@ async function saveNewThread() {
   loadThreads();
 }
 
-// ─────────────────────────────────────────
-// VOICE
-// ─────────────────────────────────────────
+async function greetOnLoad() {
+  const result = await db.from('Threads').select('*');
+  const threads = result.data || [];
+  const active = threads.filter(t => t['Status'] === 'Active');
+  if (active.length === 0) return;
+
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const suggested = active.find(t => t['Next step']) || active[0];
+  const masterCtx = await buildMasterContext(threads);
+  systemContext = masterCtx;
+  chatHistory = [];
+
+  const prompt = `${greeting} David. Brief, natural, personal greeting. ${active.length} active projects. Suggest one thing to work on based on: "${suggested['Thread name']}" — next step: "${suggested['Next step'] || 'no next step set'}". 2-3 sentences max. Direct and energetic.`;
+
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system: masterCtx, messages: [{ role: 'user', content: prompt }] })
+    });
+    const data = await response.json();
+    if (data.content && data.content[0]) {
+      const msg = data.content[0].text;
+      showDashboardMessage('assistant', msg);
+      const u = new SpeechSynthesisUtterance(msg);
+      u.rate = 1.05;
+      window.speechSynthesis.speak(u);
+      chatHistory.push({ role: 'assistant', content: msg });
+    }
+  } catch(e) {}
+}
 
 function handleVoiceTranscript(transcript) {
   const t = transcript.toLowerCase().trim();
   if (t.startsWith('project ') || t.startsWith('switch to ') || t.startsWith('open ')) {
-    const name = t.replace(/^(project |switch to |open )/, '').trim();
-    switchToProject(name);
+    switchToProject(t.replace(/^(project |switch to |open )/, '').trim());
   } else if (t === 'new thread' || t === 'add thread') {
     openNewThreadForm();
-  } else if (t === 'bank it' || t === 'bank that' || t === 'save that' || t === 'remember that' || t === 'hold that') {
+  } else if (['bank it','bank that','save that','remember that','hold that'].includes(t)) {
     saveIdea(t);
   } else if (t.includes('save progress') || t.includes('save session')) {
     saveProgress();
@@ -566,10 +542,7 @@ function handleVoiceTranscript(transcript) {
   } else {
     const inputId = currentView === 'dashboard' ? 'dashboard-input' : 'chat-input';
     const input = document.getElementById(inputId);
-    if (input) {
-      input.value = transcript.trim();
-      sendMessage(inputId);
-    }
+    if (input) { input.value = transcript.trim(); sendMessage(inputId); }
   }
 }
 
@@ -590,33 +563,23 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
     }
     const inputId = currentView === 'dashboard' ? 'dashboard-input' : 'chat-input';
     const textarea = document.getElementById(inputId);
-    if (textarea) {
-      textarea.value = final || interim;
-      textarea.scrollTop = textarea.scrollHeight;
-    }
+    if (textarea) { textarea.value = final || interim; textarea.scrollTop = textarea.scrollHeight; }
     if (final) handleVoiceTranscript(final);
   };
 
   recognition.onerror = function(e) {
-    if (e.error !== 'no-speech') {
-      isListening = false;
-      micBtn.textContent = '🎤';
-    }
+    if (e.error !== 'no-speech') { isListening = false; micBtn.textContent = '🎤'; }
   };
 
   recognition.onend = function() {
-    if (isListening) {
-      setTimeout(() => { if (isListening) recognition.start(); }, 300);
-    } else {
-      micBtn.textContent = '🎤';
-    }
+    if (isListening) { setTimeout(() => { if (isListening) recognition.start(); }, 300); }
+    else { micBtn.textContent = '🎤'; }
   };
 
   micBtn.addEventListener('click', function() {
     if (!audioEnabled) {
       audioEnabled = true; isListening = true; micBtn.textContent = '🔴';
-      const u = new SpeechSynthesisUtterance('Jarvis listening.');
-      window.speechSynthesis.speak(u);
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance('Jarvis listening.'));
       recognition.start();
     } else if (isListening) {
       isListening = false; recognition.stop(); micBtn.textContent = '🎤';
@@ -628,10 +591,6 @@ if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
   micBtn.style.opacity = '0.3';
 }
 
-// ─────────────────────────────────────────
-// EVENT LISTENERS
-// ─────────────────────────────────────────
-
 document.getElementById('send-btn').addEventListener('click', () => sendMessage('chat-input'));
 document.getElementById('chat-input').addEventListener('keypress', function(e) {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage('chat-input'); }
@@ -641,10 +600,6 @@ document.getElementById('dashboard-input').addEventListener('keypress', function
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage('dashboard-input'); }
 });
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
-
-// ─────────────────────────────────────────
-// INIT — load David profile first, then threads, then greet
-// ─────────────────────────────────────────
 
 loadDavidProfile().then(() => {
   loadThreads().then(() => {
