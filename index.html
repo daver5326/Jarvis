@@ -17,7 +17,7 @@
     <div id="dashboard-messages" style="display:none;"></div>
     <div class="dashboard-input-area">
       <button id="mic-btn">🎤</button>
-      <textarea id="dashboard-input" placeholder="Ask Jarvis anything..." rows="1"></textarea>
+      <textarea id="dashboard-input" placeholder="Talk to Jarvis... ideas, questions, anything." rows="1"></textarea>
       <button id="dashboard-send">→</button>
     </div>
     <main>
@@ -94,24 +94,48 @@
     </main>
   </div>
 
-  <!-- CHAT VIEW -->
-  <div id="chat-view" style="display:none;">
+  <!-- THREAD VIEW: BOARD + CHAT -->
+  <div id="thread-view" style="display:none;">
     <header class="chat-header">
       <button onclick="backToDashboard()" class="back-btn">← Back</button>
       <h2 id="thread-title"></h2>
       <button onclick="openEditThread()" class="edit-btn">✏️</button>
       <button onclick="saveProgress()" class="save-btn">💾</button>
     </header>
-    <div id="chat-messages"></div>
-    <div class="chat-input-area">
-      <button id="mic-btn">🎤</button>
-      <textarea id="chat-input" placeholder="Talk to Jarvis..." rows="1"></textarea>
-      <button id="send-btn">→</button>
+    <div id="board-container">
+      <div id="board-content">
+        <p class="loading" style="margin-top:30px;">Jarvis is building your board...</p>
+      </div>
+    </div>
+    <div id="chat-panel">
+      <div id="chat-messages"></div>
+      <div class="chat-input-area">
+        <button id="mic-btn">🎤</button>
+        <textarea id="chat-input" placeholder="Talk to Jarvis..." rows="1"></textarea>
+        <button id="send-btn">→</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CARD DETAIL OVERLAY -->
+  <div class="overlay" id="card-overlay">
+    <div class="overlay-inner">
+      <button class="overlay-close" onclick="closeCardDetail()">×</button>
+      <div class="ov-zone" id="ov-zone"></div>
+      <div class="ov-title" id="ov-title"></div>
+      <div class="ov-body" id="ov-body"></div>
+      <div class="ov-section">
+        <div class="ov-section-label">Why This Matters</div>
+        <div class="ov-section-body" id="ov-why"></div>
+      </div>
+      <div class="ov-section">
+        <div class="ov-section-label">Next Action</div>
+        <div class="ov-section-body" id="ov-next"></div>
+      </div>
     </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="app.js"></script>
-
 </body>
 </html>
