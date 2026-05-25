@@ -12,7 +12,7 @@ let audioEnabled = false;
 let recognition = null;
 let currentView = 'dashboard';
 let davidProfile = null;
-let pendingRoute = null; // holds a routing suggestion waiting for David's approval
+let pendingRoute = null;
 
 // ─── DAVID PROFILE ───────────────────────────────────────────────────────────
 
@@ -57,22 +57,109 @@ async function updateDavidProfile(sessionSummary) {
   } catch(e) {}
 }
 
-// ─── THREADS / DASHBOARD ─────────────────────────────────────────────────────
+// ─── TRIAGE LOGIC ─────────────────────────────────────────────────────────────
 
 const TRIAGE_DAYS = 14;
 
-function isInTriage(thread) {
-  if (thread['Status'] !== 'Active') return false;
+function getLastActivityDate(thread) {
+  // Check for saved session timestamps in progress notes
   const progress = thread['Current progress'] || '';
   const lastSaved = progress.match(/\[(?:Auto-saved|Session) ([^\]]+)\]/g);
-  if (!lastSaved) return false;
-  const lastEntry = lastSaved[lastSaved.length - 1];
-  const dateStr = lastEntry.replace(/\[(?:Auto-saved|Session) /, '').replace(']', '').split(' ')[0];
-  const lastDate = new Date(dateStr);
-  if (isNaN(lastDate)) return false;
-  const daysSince = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+  if (lastSaved) {
+    const lastEntry = lastSaved[lastSaved.length - 1];
+    const dateStr = lastEntry.replace(/\[(?:Auto-saved|Session) /, '').replace(']', '').split(' ')[0];
+    const lastDate = new Date(dateStr);
+    if (!isNaN(lastDate)) return lastDate;
+  }
+  // Fall back to created_at
+  if (thread['created_at']) {
+    const created = new Date(thread['created_at']);
+    if (!isNaN(created)) return created;
+  }
+  return null;
+}
+
+function isInTriage(thread) {
+  if (thread['Status'] !== 'Active') return false;
+  if (thread['thread_type'] === 'feature') return false;
+  const lastActivity = getLastActivityDate(thread);
+  if (!lastActivity) return false;
+  const daysSince = (Date.now() - lastActivity.getTime()) / (1000 * 60 * 60 * 24);
   return daysSince >= TRIAGE_DAYS;
 }
+
+function daysSinceActivity(thread) {
+  const lastActivity = getLastActivityDate(thread);
+  if (!lastActivity) return null;
+  return Math.floor((Date.now() - lastActivity.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+// ─── TRIAGE LIFECYCLE ─────────────────────────────────────────────────────────
+
+function showTriageScreen(thread) {
+  const days = daysSinceActivity(thread);
+  const daysText = days !== null ? `${days} days ago` : 'unknown';
+
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'flex';
+  document.getElementById('thread-title').textContent = thread['Thread name'];
+  document.getElementById('chat-messages').innerHTML = '';
+
+  document.getElementById('board-content').innerHTML = `
+    <div class="triage-screen">
+      <div class="triage-screen-eyebrow">🕰 Triage</div>
+      <div class="triage-screen-title">${thread['Thread name']}</div>
+      <div class="triage-screen-meta">Last active ${daysText}</div>
+      ${thread['Goal'] ? `<div class="triage-screen-goal">${thread['Goal']}</div>` : ''}
+      <div class="triage-screen-actions">
+        <button class="triage-action-btn reactivate" onclick="triageReactivate(${thread.id})">
+          <span class="triage-action-icon">⚡</span>
+          <span class="triage-action-label">Reactivate</span>
+          <span class="triage-action-sub">Pick up where you left off</span>
+        </button>
+        <button class="triage-action-btn review" onclick="triageReview(${thread.id})">
+          <span class="triage-action-icon">👁</span>
+          <span class="triage-action-label">Review</span>
+          <span class="triage-action-sub">See progress before deciding</span>
+        </button>
+        <button class="triage-action-btn archive" onclick="triageArchive(${thread.id})">
+          <span class="triage-action-icon">📦</span>
+          <span class="triage-action-label">Archive</span>
+          <span class="triage-action-sub">Mark complete and close</span>
+        </button>
+      </div>
+    </div>`;
+
+  addMessage('assistant', `${thread['Thread name']} has been quiet for ${daysText}. What do you want to do with it?`);
+}
+
+async function triageReactivate(id) {
+  await db.from('Threads').update({ 'Status': 'Active' }).eq('id', id);
+  // Add a reactivation note to progress
+  const result = await db.from('Threads').select('*').eq('id', id).single();
+  if (result.data) {
+    const note = '\n\n[Reactivated ' + new Date().toLocaleDateString() + ']';
+    const newProgress = (result.data['Current progress'] || '') + note;
+    await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', id);
+  }
+  loadThreads();
+  openThread(id);
+}
+
+async function triageReview(id) {
+  // Open the thread normally — let David see the board and progress
+  openThread(id);
+}
+
+async function triageArchive(id) {
+  if (!confirm('Archive this thread? It will be marked Complete and moved out of active view.')) return;
+  await db.from('Threads').update({ 'Status': 'Complete' }).eq('id', id);
+  loadThreads();
+  backToDashboard();
+  showDashboardMessage('assistant', 'Archived. Good call — keeping things clean.');
+}
+
+// ─── THREADS / DASHBOARD ─────────────────────────────────────────────────────
 
 async function loadThreads() {
   try {
@@ -134,11 +221,14 @@ async function loadThreads() {
           <span class="triage-count">${triage.length}</span>
         </div>
         <p class="triage-desc">Inactive 14+ days — review, reactivate, or close.</p>
-        ${triage.map(t => `<div class="thread-card triage" onclick="openThread(${t.id})">
-          <div class="platform-badge">${t.platform || 'Claude'}</div>
-          <h2>${t['Thread name']}</h2>
-          <p class="thread-status">Triage · ${t['Next step'] ? t['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
-        </div>`).join('')}
+        ${triage.map(t => {
+          const days = daysSinceActivity(t);
+          return `<div class="thread-card triage" onclick="openThread(${t.id})">
+            <div class="platform-badge">${t.platform || 'Claude'}</div>
+            <h2>${t['Thread name']}</h2>
+            <p class="thread-status">Inactive ${days !== null ? days + ' days' : ''} · ${t['Next step'] ? t['Next step'].slice(0,50) + '...' : 'No next step set'}</p>
+          </div>`;
+        }).join('')}
       </div>`;
     }
 
@@ -277,16 +367,23 @@ async function openThread(id) {
   currentView = 'thread';
   pendingRoute = null;
 
+  const micBtn = document.getElementById('mic-btn');
+  micBtn.textContent = '🎤';
+  micBtn.style.opacity = '1';
+
+  // Triage intercept
+  if (isInTriage(currentThread)) {
+    showTriageScreen(currentThread);
+    return;
+  }
+
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('thread-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
   document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading...</p>';
 
-  const micBtn = document.getElementById('mic-btn');
-  micBtn.textContent = '🎤';
-  micBtn.style.opacity = '1';
-
+  // Feature thread
   if (currentThread['thread_type'] === 'feature') {
     renderFeatureUI(currentThread);
     systemContext = `You are Jarvis. David is using a feature you built: "${currentThread['Thread name']}". The underlying table is "${currentThread['Goal']}". Help him use it, add entries, view data, or modify it. Keep responses short and conversational. No markdown.`;
@@ -294,6 +391,7 @@ async function openThread(id) {
     return;
   }
 
+  // Standard thread
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
   const board = buildBoardFromThread(currentThread, ideas);
@@ -379,7 +477,7 @@ function showRoutingSuggestion(routing, text) {
     msgContainer.appendChild(div);
     msgContainer.scrollTop = 999999;
   } else {
-    return false; // no routing suggestion, fall through to normal chat
+    return false;
   }
   return true;
 }
@@ -387,36 +485,35 @@ function showRoutingSuggestion(routing, text) {
 async function confirmRoute() {
   if (!pendingRoute) return;
   const msgContainer = document.getElementById('dashboard-messages');
-
-  // Remove the routing suggestion buttons
   const lastMsg = msgContainer.lastElementChild;
   if (lastMsg) lastMsg.remove();
 
   if (pendingRoute.type === 'existing') {
-    // Add note to thread progress and open it
-    const result = await db.from('Threads').select('*').eq('id', pendingRoute.thread_id).single();
+    const threadId = pendingRoute.thread_id;
+    const text = pendingRoute.text;
+    pendingRoute = null;
+    const result = await db.from('Threads').select('*').eq('id', threadId).single();
     if (result.data) {
-      const note = '\n\n[Routed from dashboard ' + new Date().toLocaleDateString() + ']\n' + pendingRoute.text;
+      const note = '\n\n[Routed from dashboard ' + new Date().toLocaleDateString() + ']\n' + text;
       const newProgress = (result.data['Current progress'] || '') + note;
-      await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', pendingRoute.thread_id);
-      pendingRoute = null;
-      openThread(pendingRoute ? pendingRoute.thread_id : result.data.id);
+      await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', threadId);
+      openThread(threadId);
     }
   } else if (pendingRoute.type === 'new') {
+    const name = pendingRoute.suggested_name;
+    const text = pendingRoute.text;
+    pendingRoute = null;
     const { data: newThread, error } = await db.from('Threads').insert([{
-      'Thread name': pendingRoute.suggested_name,
-      'Goal': pendingRoute.text,
+      'Thread name': name,
+      'Goal': text,
       'Status': 'Active',
       'platform': 'Jarvis'
     }]).select().single();
     if (!error && newThread) {
-      pendingRoute = null;
       loadThreads();
       openThread(newThread.id);
     }
   }
-
-  pendingRoute = null;
 }
 
 function dismissRoute() {
@@ -586,7 +683,6 @@ async function sendMessage(inputId) {
   if (!text) return;
   input.value = '';
 
-  // Route build requests
   if (detectBuildIntent(text)) {
     if (currentView === 'dashboard') showDashboardMessage('user', text);
     else addMessage('user', text);
@@ -601,7 +697,6 @@ async function sendMessage(inputId) {
     showDashboardMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
 
-    // Analyze for routing — run in parallel with chat
     const routingPromise = analyzeAndRoute(text, threads);
 
     const thinking = document.createElement('div');
@@ -631,7 +726,6 @@ async function sendMessage(inputId) {
         speak(reply);
       }
 
-      // Show routing suggestion after chat response if relevant
       if (routing && (routing.route || routing.suggest_new)) {
         setTimeout(() => showRoutingSuggestion(routing, text), 600);
       }
@@ -800,7 +894,7 @@ async function saveNewThread() {
 async function greetOnLoad() {
   const result = await db.from('Threads').select('*');
   const threads = result.data || [];
-  const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature');
+  const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature' && !isInTriage(t));
   if (active.length === 0) return;
 
   const hour = new Date().getHours();
