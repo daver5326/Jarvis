@@ -134,16 +134,32 @@ function showTriageScreen(thread) {
 }
 
 async function triageReactivate(id) {
-  await db.from('Threads').update({ 'Status': 'Active' }).eq('id', id);
-  // Add a reactivation note to progress
   const result = await db.from('Threads').select('*').eq('id', id).single();
-  if (result.data) {
-    const note = '\n\n[Reactivated ' + new Date().toLocaleDateString() + ']';
-    const newProgress = (result.data['Current progress'] || '') + note;
-    await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', id);
-  }
+  if (!result.data) return;
+  const note = '\n\n[Reactivated ' + new Date().toLocaleDateString() + ']';
+  const newProgress = (result.data['Current progress'] || '') + note;
+  await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', id);
+  currentThread = { ...result.data, 'Current progress': newProgress };
   loadThreads();
-  openThread(id);
+  // Bypass triage check — open board directly
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'flex';
+  document.getElementById('thread-title').textContent = currentThread['Thread name'];
+  document.getElementById('chat-messages').innerHTML = '';
+  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading...</p>';
+  const ideas = (await db.from('Ideas').select('*').eq('thread_id', id)).data || [];
+  const board = buildBoardFromThread(currentThread, ideas);
+  renderBoard(board);
+  generateInsightCard(currentThread, ideas).then(insight => {
+    if (insight) injectInsight(insight);
+    else { const card = document.getElementById('insight-card'); if (card) card.style.display = 'none'; }
+  });
+  const allThreadsResult = await db.from('Threads').select('*');
+  const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
+  const davidCtx = buildDavidContext();
+  const crossThreadContext = otherThreads.length > 0 ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => `- ${t['Thread name']}: ${t['Goal']?t['Goal'].slice(0,100):'No goal'}`).join('\n') : '';
+  systemContext = `You are Jarvis, a personal AI partner for David Rogers.\n\n${davidCtx}\n\nCURRENT PROJECT: "${currentThread['Thread name']}"\nGoal: ${currentThread['Goal']}\nStatus: ${currentThread['Status']}\nNext Steps: ${currentThread['Next step']}\nDecisions Made: ${currentThread['Decisions made']}\nOpen Questions: ${currentThread['Open question']}${crossThreadContext}\n\nDavid just reactivated this thread after a break. Help him re-engage. Keep it short and direct. No markdown.`;
+  addMessage('assistant', `Back on ${currentThread['Thread name']}. Let\'s pick it up — next step was: ${currentThread['Next step'] || 'not set'}.`);
 }
 
 async function triageReview(id) {
