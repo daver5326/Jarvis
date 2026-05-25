@@ -805,22 +805,24 @@ async function sendMessage(inputId) {
   if (!text) return;
   input.value = '';
 
-  if (detectBuildIntent(text)) {
-    if (currentView === 'dashboard') showDashboardMessage('user', text);
-    else addMessage('user', text);
-    handleBuildRequest(text);
-    return;
-  }
 
   if (currentView === 'dashboard') {
     const allResult = await db.from('Threads').select('*');
     const threads = allResult.data || [];
 
+    // Update intent runs first — before build intent
     if (detectUpdateIntent(text)) {
       showDashboardMessage('user', text);
       handleThreadUpdate(text, threads);
       return;
     }
+
+    if (detectBuildIntent(text)) {
+      showDashboardMessage('user', text);
+      handleBuildRequest(text);
+      return;
+    }
+
     systemContext = await buildMasterContext(threads);
     showDashboardMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
@@ -862,6 +864,13 @@ async function sendMessage(inputId) {
       thinking.remove();
       showDashboardMessage('assistant', 'Error: ' + e.message);
     }
+    return;
+  }
+
+  // Build intent in thread view
+  if (detectBuildIntent(text)) {
+    addMessage('user', text);
+    handleBuildRequest(text);
     return;
   }
 
