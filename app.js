@@ -1,5 +1,4 @@
 const SUPABASE_URL = 'https://jbsocnomwxodqyhiukcl.supabase.co';
-
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impic29jbm9td3hvZHF5aGl1a2NsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyNjQ5NTUsImV4cCI6MjA5Mzg0MDk1NX0.ehX6AEqpSpVAF9Q3UxIabZXdZKLDqKKP9KL3pDIPhHE';
 
 const { createClient } = supabase;
@@ -110,14 +109,8 @@ async function loadThreads() {
     };
 
     let html = '';
-
-    if (active.length > 0) {
-      html += active.map(renderCard).join('');
-    }
-
-    if (other.length > 0) {
-      html += other.map(renderCard).join('');
-    }
+    if (active.length > 0) html += active.map(renderCard).join('');
+    if (other.length > 0) html += other.map(renderCard).join('');
 
     if (triage.length > 0) {
       html += `<div class="triage-section">
@@ -147,12 +140,10 @@ async function loadThreads() {
 function buildBoardFromThread(thread, ideas) {
   const board = {};
 
-  // Goal → Where We Are
   if (thread['Goal']) {
     board.where = thread['Goal'];
   }
 
-  // Next Step → Moving
   if (thread['Next step']) {
     board.moving = [{
       title: 'Next Step',
@@ -163,7 +154,6 @@ function buildBoardFromThread(thread, ideas) {
     }];
   }
 
-  // Open Questions → Blocked
   if (thread['Open question']) {
     const questions = thread['Open question'].split('\n').filter(q => q.trim());
     board.blocked = questions.map(q => ({
@@ -175,7 +165,6 @@ function buildBoardFromThread(thread, ideas) {
     }));
   }
 
-  // Decisions Made → Decided
   if (thread['Decisions made']) {
     const decisions = thread['Decisions made'].split('\n').filter(d => d.trim());
     board.decided = decisions.map(d => ({
@@ -187,7 +176,6 @@ function buildBoardFromThread(thread, ideas) {
     }));
   }
 
-  // Banked Ideas → Horizon
   if (ideas && ideas.length > 0) {
     board.horizon = ideas.slice(0, 4).map(i => ({
       title: i.idea_text.slice(0, 55),
@@ -243,7 +231,6 @@ function renderBoard(board) {
     </div>`;
   }
 
-  // Insight placeholder — filled async
   html += `<div class="insight" id="insight-card" style="opacity:0.35;">
     <div class="insight-icon">⚡</div>
     <div>
@@ -251,8 +238,6 @@ function renderBoard(board) {
       <div class="insight-text" id="insight-text">Thinking...</div>
     </div>
   </div>`;
-
-  const hasContent = ['moving','blocked','decided','horizon'].some(z => board[z] && board[z].length > 0);
 
   ['moving','blocked','decided','horizon'].forEach(zone => {
     const cards = board[zone];
@@ -340,11 +325,9 @@ async function openThread(id) {
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
 
-  // ── Instant board render ──
   const board = buildBoardFromThread(currentThread, ideas);
   renderBoard(board);
 
-  // ── Async insight card ──
   generateInsightCard(currentThread, ideas).then(insight => {
     if (insight) injectInsight(insight);
     else {
@@ -353,7 +336,6 @@ async function openThread(id) {
     }
   });
 
-  // ── System context for chat ──
   const allThreadsResult = await db.from('Threads').select('*');
   const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
   const davidCtx = buildDavidContext();
@@ -449,6 +431,77 @@ function speak(text) {
   window.speechSynthesis.speak(u);
 }
 
+// ─── BUILD INTENT ─────────────────────────────────────────────────────────────
+
+function detectBuildIntent(text) {
+  const triggers = [
+    'build', 'create', 'add a', 'i want to track', 'make a', 'new feature',
+    'can you build', 'can jarvis build', 'add feature', 'i need a'
+  ];
+  const lower = text.toLowerCase();
+  return triggers.some(t => lower.includes(t));
+}
+
+async function handleBuildRequest(text) {
+  const msgContainer = currentView === 'dashboard'
+    ? document.getElementById('dashboard-messages')
+    : document.getElementById('chat-messages');
+
+  const status = document.createElement('div');
+  status.className = 'message assistant';
+  status.textContent = 'On it — figuring out what to build...';
+  msgContainer.appendChild(status);
+  msgContainer.scrollTop = 999999;
+
+  try {
+    const planRes = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: `You are Jarvis, a builder. David has requested something to be built.
+You must respond with ONLY valid JSON in this exact structure:
+{
+  "table": "table_name",
+  "columns": [{"name": "col_name", "type": "text|integer|boolean|timestamptz"}],
+  "confirmation": "One sentence telling David exactly what you are building."
+}
+No markdown, no explanation, just JSON.`,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+
+    const planData = await planRes.json();
+    const raw = planData.content[0].text.trim().replace(/```json|```/g, '');
+    const plan = JSON.parse(raw);
+
+    status.textContent = plan.confirmation;
+
+    const schemaRes = await fetch('/api/schema', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'create',
+        table: plan.table,
+        columns: plan.columns
+      })
+    });
+
+    const schemaData = await schemaRes.json();
+    if (!schemaData.success) throw new Error('Schema failed: ' + schemaData.error);
+
+    const doneMsg = document.createElement('div');
+    doneMsg.className = 'message assistant';
+    doneMsg.textContent = `Done. "${plan.table}" is ready in your database. UI coming next.`;
+    msgContainer.appendChild(doneMsg);
+    msgContainer.scrollTop = 999999;
+
+  } catch(e) {
+    status.textContent = 'Build failed: ' + e.message;
+  }
+}
+
+// ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
+
 async function sendMessage(inputId) {
   const inputElId = inputId || (currentView === 'dashboard' ? 'dashboard-input' : 'chat-input');
   const input = document.getElementById(inputElId);
@@ -456,7 +509,7 @@ async function sendMessage(inputId) {
   if (!text) return;
   input.value = '';
 
-    // Route build requests
+  // Route build requests
   if (detectBuildIntent(text)) {
     if (currentView === 'dashboard') showDashboardMessage('user', text);
     else addMessage('user', text);
