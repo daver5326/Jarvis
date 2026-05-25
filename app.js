@@ -64,8 +64,7 @@ const TRIAGE_DAYS = 14;
 function getLastActivityDate(thread) {
   // Check for saved session timestamps in progress notes
   const progress = thread['Current progress'] || '';
-  const lastSaved = progress.match(/\[(?:Auto-saved|Session|Reactivated) ([^\]]+)\]/g);
-
+  const lastSaved = progress.match(/\[(?:Auto-saved|Session) ([^\]]+)\]/g);
   if (lastSaved) {
     const lastEntry = lastSaved[lastSaved.length - 1];
     const dateStr = lastEntry.replace(/\[(?:Auto-saved|Session) /, '').replace(']', '').split(' ')[0];
@@ -627,6 +626,88 @@ function detectBuildIntent(text) {
   return triggers.some(t => lower.includes(t));
 }
 
+function detectUpdateIntent(text) {
+  const triggers = ['update jarvis', 'update the jarvis', 'file this', 'save this to', 'add this to', 'put this in', 'log this to', 'store this in', 'session summary', 'update my thread', 'update thread'];
+  const lower = text.toLowerCase();
+  return triggers.some(t => lower.includes(t));
+}
+
+async function handleThreadUpdate(text, threads) {
+  const msgContainer = document.getElementById('dashboard-messages');
+  const status = document.createElement('div');
+  status.className = 'message assistant';
+  status.textContent = 'Organizing this and filing it...';
+  msgContainer.appendChild(status);
+  msgContainer.scrollTop = 999999;
+
+  const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature');
+  const threadList = active.map(t => `ID:${t.id} | Name: ${t['Thread name']} | Goal: ${(t['Goal']||'').slice(0,80)}`).join('\n');
+
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: `You are Jarvis organizing information from David into the right project thread.
+
+Active threads:
+${threadList}
+
+David has given you a session summary or update. Your job:
+1. Identify which thread this belongs to
+2. Extract what should update each field
+
+Respond with ONLY valid JSON:
+{
+  "thread_id": <id>,
+  "thread_name": "<name>",
+  "updates": {
+    "Goal": "<updated goal or null if unchanged>",
+    "Next step": "<most important next action or null>",
+    "Decisions made": "<append new decisions or null>",
+    "Open question": "<append new open questions or null>",
+    "Current progress": "<session summary to append>"
+  }
+}
+Only include fields that have new information. Always include thread_id and thread_name. Always include Current progress with a concise summary of what was shared.`,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+
+    const data = await response.json();
+    const raw = data.content[0].text.trim().replace(/```json|```/g, '');
+    const plan = JSON.parse(raw);
+
+    // Fetch current thread data
+    const result = await db.from('Threads').select('*').eq('id', plan.thread_id).single();
+    if (!result.data) throw new Error('Thread not found');
+
+    const current = result.data;
+    const updates = {};
+
+    if (plan.updates['Goal']) updates['Goal'] = plan.updates['Goal'];
+    if (plan.updates['Next step']) updates['Next step'] = plan.updates['Next step'];
+    if (plan.updates['Decisions made']) {
+      updates['Decisions made'] = (current['Decisions made'] ? current['Decisions made'] + '\n' : '') + plan.updates['Decisions made'];
+    }
+    if (plan.updates['Open question']) {
+      updates['Open question'] = (current['Open question'] ? current['Open question'] + '\n' : '') + plan.updates['Open question'];
+    }
+    if (plan.updates['Current progress']) {
+      updates['Current progress'] = (current['Current progress'] || '') + '\n\n[Session ' + new Date().toLocaleDateString() + ']\n' + plan.updates['Current progress'];
+    }
+
+    const { error } = await db.from('Threads').update(updates).eq('id', plan.thread_id);
+    if (error) throw new Error(error.message);
+
+    status.textContent = `Filed to "${plan.thread_name}" — goal, next step, decisions, and progress all updated.`;
+    loadThreads();
+
+  } catch(e) {
+    status.textContent = 'Filing failed: ' + e.message;
+  }
+}
+
 async function handleBuildRequest(text) {
   const msgContainer = currentView === 'dashboard' ? document.getElementById('dashboard-messages') : document.getElementById('chat-messages');
   const status = document.createElement('div');
@@ -732,6 +813,12 @@ async function sendMessage(inputId) {
   if (currentView === 'dashboard') {
     const allResult = await db.from('Threads').select('*');
     const threads = allResult.data || [];
+
+    if (detectUpdateIntent(text)) {
+      showDashboardMessage('user', text);
+      handleThreadUpdate(text, threads);
+      return;
+    }
     systemContext = await buildMasterContext(threads);
     showDashboardMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
