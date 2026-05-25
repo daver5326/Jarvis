@@ -650,26 +650,28 @@ async function handleThreadUpdate(text, threads) {
       body: JSON.stringify({
         system: `You are Jarvis organizing information from David into the right project thread.
 
+IMPORTANT: You must ONLY update an existing thread from this list. Never create a new thread. Always pick the best matching thread_id from the list below.
+
 Active threads:
 ${threadList}
 
 David has given you a session summary or update. Your job:
-1. Identify which thread this belongs to
+1. Pick the single best matching thread_id from the list above
 2. Extract what should update each field
 
 Respond with ONLY valid JSON:
 {
-  "thread_id": <id>,
-  "thread_name": "<name>",
+  "thread_id": <must be one of the IDs listed above>,
+  "thread_name": "<name of the matched thread>",
   "updates": {
     "Goal": "<updated goal or null if unchanged>",
     "Next step": "<most important next action or null>",
-    "Decisions made": "<append new decisions or null>",
-    "Open question": "<append new open questions or null>",
-    "Current progress": "<session summary to append>"
+    "Decisions made": "<new decisions to append, or null>",
+    "Open question": "<new open questions to append, or null>",
+    "Current progress": "<concise summary of this session to append>"
   }
 }
-Only include fields that have new information. Always include thread_id and thread_name. Always include Current progress with a concise summary of what was shared.`,
+Always include thread_id, thread_name, and Current progress. Only include other fields if there is genuinely new information.`,
         messages: [{ role: 'user', content: text }]
       })
     });
@@ -678,11 +680,11 @@ Only include fields that have new information. Always include thread_id and thre
     const raw = data.content[0].text.trim().replace(/```json|```/g, '');
     const plan = JSON.parse(raw);
 
-    // Fetch current thread data
-    const result = await db.from('Threads').select('*').eq('id', plan.thread_id).single();
-    if (!result.data) throw new Error('Thread not found');
+    // Verify thread_id actually exists in our active list — prevent rogue creates
+    const validThread = active.find(t => t.id === plan.thread_id);
+    if (!validThread) throw new Error(`Thread ID ${plan.thread_id} not found in active threads`);
 
-    const current = result.data;
+    const current = validThread;
     const updates = {};
 
     if (plan.updates['Goal']) updates['Goal'] = plan.updates['Goal'];
@@ -700,7 +702,7 @@ Only include fields that have new information. Always include thread_id and thre
     const { error } = await db.from('Threads').update(updates).eq('id', plan.thread_id);
     if (error) throw new Error(error.message);
 
-    status.textContent = `Filed to "${plan.thread_name}" — goal, next step, decisions, and progress all updated.`;
+    status.textContent = `Filed to "${plan.thread_name}" — updated.`;
     loadThreads();
 
   } catch(e) {
