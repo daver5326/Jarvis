@@ -12,6 +12,7 @@ let audioEnabled = false;
 let recognition = null;
 let currentView = 'dashboard';
 let davidProfile = null;
+let pendingRoute = null; // holds a routing suggestion waiting for David's approval
 
 // ─── DAVID PROFILE ───────────────────────────────────────────────────────────
 
@@ -148,75 +149,40 @@ async function loadThreads() {
   }
 }
 
-// ─── BOARD: INSTANT RENDER FROM THREAD DATA ──────────────────────────────────
+// ─── BOARD ────────────────────────────────────────────────────────────────────
 
 function buildBoardFromThread(thread, ideas) {
   const board = {};
-
   if (thread['Goal']) board.where = thread['Goal'];
-
   if (thread['Next step']) {
-    board.moving = [{
-      title: 'Next Step',
-      body: thread['Next step'],
-      tag: 'strategy',
-      why: 'This is the current priority.',
-      next: thread['Next step']
-    }];
+    board.moving = [{ title: 'Next Step', body: thread['Next step'], tag: 'strategy', why: 'This is the current priority.', next: thread['Next step'] }];
   }
-
   if (thread['Open question']) {
-    const questions = thread['Open question'].split('\n').filter(q => q.trim());
-    board.blocked = questions.map(q => ({
-      title: q.slice(0, 60),
-      body: q,
-      tag: 'strategy',
-      why: 'Unresolved question blocking progress.',
-      next: 'Decide or research this.'
+    board.blocked = thread['Open question'].split('\n').filter(q => q.trim()).map(q => ({
+      title: q.slice(0,60), body: q, tag: 'strategy', why: 'Unresolved question blocking progress.', next: 'Decide or research this.'
     }));
   }
-
   if (thread['Decisions made']) {
-    const decisions = thread['Decisions made'].split('\n').filter(d => d.trim());
-    board.decided = decisions.map(d => ({
-      title: d.slice(0, 60),
-      body: d,
-      tag: 'strategy',
-      why: 'Decision locked in.',
-      next: 'Execute on this.'
+    board.decided = thread['Decisions made'].split('\n').filter(d => d.trim()).map(d => ({
+      title: d.slice(0,60), body: d, tag: 'strategy', why: 'Decision locked in.', next: 'Execute on this.'
     }));
   }
-
   if (ideas && ideas.length > 0) {
-    board.horizon = ideas.slice(0, 4).map(i => ({
-      title: i.idea_text.slice(0, 55),
-      body: i.idea_text,
-      tag: 'strategy',
-      why: 'Banked for future consideration.',
-      next: 'Revisit when ready.'
+    board.horizon = ideas.slice(0,4).map(i => ({
+      title: i.idea_text.slice(0,55), body: i.idea_text, tag: 'strategy', why: 'Banked for future consideration.', next: 'Revisit when ready.'
     }));
   }
-
   return board;
 }
 
 async function generateInsightCard(thread, ideas) {
-  const prompt = `You are Jarvis. One sharp insight about this project — one sentence connecting something here to a broader opportunity or risk. No preamble.
-
-Project: ${thread['Thread name']}
-Goal: ${thread['Goal'] || ''}
-Next Step: ${thread['Next step'] || ''}
-Open Questions: ${thread['Open question'] || ''}
-Decisions: ${thread['Decisions made'] || ''}
-Banked Ideas: ${(ideas || []).map(i => i.idea_text).join(' | ') || 'None'}`;
-
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system: 'You generate one sharp insight sentence about a project. No markdown, no preamble, just the insight.',
-        messages: [{ role: 'user', content: prompt }]
+        messages: [{ role: 'user', content: `Project: ${thread['Thread name']}\nGoal: ${thread['Goal']||''}\nNext Step: ${thread['Next step']||''}\nOpen Questions: ${thread['Open question']||''}\nDecisions: ${thread['Decisions made']||''}\nBanked Ideas: ${(ideas||[]).map(i=>i.idea_text).join(' | ')||'None'}` }]
       })
     });
     const data = await response.json();
@@ -229,37 +195,19 @@ function renderBoard(board) {
   const zoneColors = { moving: '#34d399', blocked: '#f87171', decided: '#60a5fa', horizon: '#fbbf24' };
   const zoneLabels = { moving: 'Moving', blocked: 'Blocked', decided: 'Decided', horizon: 'Horizon' };
   const zoneDots  = { moving: 'green',  blocked: 'red',     decided: 'blue',    horizon: 'amber'  };
-
   let html = '';
 
   if (board.where) {
-    html += `<div class="where-card">
-      <div class="zone-eyebrow">🧭 Where We Are</div>
-      <div class="where-body">${board.where}</div>
-      <div class="where-ts">Updated · ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div>
-    </div>`;
+    html += `<div class="where-card"><div class="zone-eyebrow">🧭 Where We Are</div><div class="where-body">${board.where}</div><div class="where-ts">Updated · ${new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</div></div>`;
   }
 
-  html += `<div class="insight" id="insight-card" style="opacity:0.35;">
-    <div class="insight-icon">⚡</div>
-    <div>
-      <div class="insight-label">Jarvis Insight</div>
-      <div class="insight-text" id="insight-text">Thinking...</div>
-    </div>
-  </div>`;
+  html += `<div class="insight" id="insight-card" style="opacity:0.35;"><div class="insight-icon">⚡</div><div><div class="insight-label">Jarvis Insight</div><div class="insight-text" id="insight-text">Thinking...</div></div></div>`;
 
   ['moving','blocked','decided','horizon'].forEach(zone => {
     const cards = board[zone];
     const color = zoneDots[zone];
     const label = zoneLabels[zone];
-
-    html += `<div class="zone-section">
-      <div class="zone-header">
-        <div class="zone-dot ${color}"></div>
-        <span class="zone-name ${color}">${label}</span>
-        <span class="zone-count ${color}">${cards ? cards.length : 0}</span>
-      </div>`;
-
+    html += `<div class="zone-section"><div class="zone-header"><div class="zone-dot ${color}"></div><span class="zone-name ${color}">${label}</span><span class="zone-count ${color}">${cards ? cards.length : 0}</span></div>`;
     if (!cards || cards.length === 0) {
       html += `<div class="card-empty">Nothing here yet</div>`;
     } else {
@@ -269,15 +217,9 @@ function renderBoard(board) {
         const w = (card.why||'').replace(/'/g,"\\'");
         const n = (card.next||'').replace(/'/g,"\\'");
         const c = zoneColors[zone];
-        html += `<div class="card ${color}" onclick="openCardDetail('${t}','${label}','${c}','${b}','${w}','${n}')">
-          <div class="card-title">${card.title}</div>
-          <div class="card-body">${card.body}</div>
-          <span class="card-tag tag-${card.tag||'strategy'}">${card.tag||'strategy'}</span>
-          <div class="card-arrow">›</div>
-        </div>`;
+        html += `<div class="card ${color}" onclick="openCardDetail('${t}','${label}','${c}','${b}','${w}','${n}')"><div class="card-title">${card.title}</div><div class="card-body">${card.body}</div><span class="card-tag tag-${card.tag||'strategy'}">${card.tag||'strategy'}</span><div class="card-arrow">›</div></div>`;
       });
     }
-
     html += `</div>`;
   });
 
@@ -287,21 +229,16 @@ function renderBoard(board) {
 function injectInsight(text) {
   const card = document.getElementById('insight-card');
   const textEl = document.getElementById('insight-text');
-  if (card && textEl) {
-    textEl.textContent = text;
-    card.style.opacity = '1';
-    card.style.transition = 'opacity 0.5s ease';
-  }
+  if (card && textEl) { textEl.textContent = text; card.style.opacity = '1'; card.style.transition = 'opacity 0.5s ease'; }
 }
 
-// ─── FEATURE UI RENDERER ─────────────────────────────────────────────────────
+// ─── FEATURE UI ───────────────────────────────────────────────────────────────
 
 function renderFeatureUI(thread) {
   const container = document.getElementById('board-content');
   try {
     const html = thread['custom_ui'] || '<p class="loading">No UI generated yet.</p>';
     container.innerHTML = html;
-    // Execute any scripts in the injected HTML
     container.querySelectorAll('script').forEach(oldScript => {
       const newScript = document.createElement('script');
       newScript.textContent = oldScript.textContent;
@@ -312,7 +249,7 @@ function renderFeatureUI(thread) {
   }
 }
 
-// ─── CARD DETAIL OVERLAY ─────────────────────────────────────────────────────
+// ─── CARD DETAIL ─────────────────────────────────────────────────────────────
 
 function openCardDetail(title, zone, color, body, why, next) {
   document.getElementById('ov-zone').textContent = zone;
@@ -338,6 +275,7 @@ async function openThread(id) {
   audioEnabled = false;
   isListening = false;
   currentView = 'thread';
+  pendingRoute = null;
 
   document.getElementById('dashboard').style.display = 'none';
   document.getElementById('thread-view').style.display = 'flex';
@@ -349,69 +287,149 @@ async function openThread(id) {
   micBtn.textContent = '🎤';
   micBtn.style.opacity = '1';
 
-  // Feature thread — render custom UI
   if (currentThread['thread_type'] === 'feature') {
     renderFeatureUI(currentThread);
-    const davidCtx = buildDavidContext();
     systemContext = `You are Jarvis. David is using a feature you built: "${currentThread['Thread name']}". The underlying table is "${currentThread['Goal']}". Help him use it, add entries, view data, or modify it. Keep responses short and conversational. No markdown.`;
     addMessage('assistant', `${currentThread['Thread name']} — ready to use. What would you like to do?`);
     return;
   }
 
-  // Standard thread — render board
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
-
   const board = buildBoardFromThread(currentThread, ideas);
   renderBoard(board);
 
   generateInsightCard(currentThread, ideas).then(insight => {
     if (insight) injectInsight(insight);
-    else {
-      const card = document.getElementById('insight-card');
-      if (card) card.style.display = 'none';
-    }
+    else { const card = document.getElementById('insight-card'); if (card) card.style.display = 'none'; }
   });
 
   const allThreadsResult = await db.from('Threads').select('*');
   const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
   const davidCtx = buildDavidContext();
+  const crossThreadContext = otherThreads.length > 0 ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => `- ${t['Thread name']}: ${t['Goal']?t['Goal'].slice(0,100):'No goal'}${t['Next step']?' | Next: '+t['Next step'].slice(0,80):''}`).join('\n') : '';
+  const ideasContext = ideas.length > 0 ? '\n\nBANKED IDEAS:\n' + ideas.map(i => '- ' + i.idea_text.slice(0,200)).join('\n') : '';
+  const recentProgress = currentThread['Current progress'] ? '\n\nRECENT HISTORY:\n' + currentThread['Current progress'].slice(-2000) : '';
 
-  const crossThreadContext = otherThreads.length > 0
-    ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => `- ${t['Thread name']}: ${t['Goal'] ? t['Goal'].slice(0,100) : 'No goal'}${t['Next step'] ? ' | Next: ' + t['Next step'].slice(0,80) : ''}`).join('\n')
-    : '';
-
-  const ideasContext = ideas.length > 0
-    ? '\n\nBANKED IDEAS:\n' + ideas.map(i => '- ' + i.idea_text.slice(0,200)).join('\n')
-    : '';
-
-  const recentProgress = currentThread['Current progress']
-    ? '\n\nRECENT HISTORY:\n' + currentThread['Current progress'].slice(-2000)
-    : '';
-
-  systemContext = `You are Jarvis, a personal AI partner for David Rogers.
-
-${davidCtx}
-
-CURRENT PROJECT: "${currentThread['Thread name']}"
-Goal: ${currentThread['Goal']}
-Status: ${currentThread['Status']}
-Next Steps: ${currentThread['Next step']}
-Decisions Made: ${currentThread['Decisions made']}
-Open Questions: ${currentThread['Open question']}
-Notes: ${currentThread['Note']}${recentProgress}${ideasContext}${crossThreadContext}
-
-David is looking at the visual board for this project while chatting with you. Help him go deep on specific cards, make decisions, capture ideas, or take action. Keep responses short and conversational. No markdown.`;
+  systemContext = `You are Jarvis, a personal AI partner for David Rogers.\n\n${davidCtx}\n\nCURRENT PROJECT: "${currentThread['Thread name']}"\nGoal: ${currentThread['Goal']}\nStatus: ${currentThread['Status']}\nNext Steps: ${currentThread['Next step']}\nDecisions Made: ${currentThread['Decisions made']}\nOpen Questions: ${currentThread['Open question']}\nNotes: ${currentThread['Note']}${recentProgress}${ideasContext}${crossThreadContext}\n\nDavid is looking at the visual board for this project while chatting with you. Help him go deep on specific cards, make decisions, capture ideas, or take action. Keep responses short and conversational. No markdown.`;
 
   let openingMsg = `On ${currentThread['Thread name']}.`;
   if (currentThread['Next step']) openingMsg += ` Next up: ${currentThread['Next step']}`;
   addMessage('assistant', openingMsg);
 }
 
-// ─── CONTEXT / CHAT ──────────────────────────────────────────────────────────
+// ─── DASHBOARD ROUTING ────────────────────────────────────────────────────────
+
+async function analyzeAndRoute(text, threads) {
+  const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature');
+  if (active.length === 0) return null;
+
+  const threadList = active.map(t => `ID:${t.id} | Name: ${t['Thread name']} | Goal: ${(t['Goal']||'').slice(0,100)}`).join('\n');
+
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: `You are Jarvis's routing brain. David said something on the dashboard. Decide if it belongs to an existing project thread.
+
+Active threads:
+${threadList}
+
+Rules:
+- If the message clearly relates to one of these threads, return JSON: {"route": true, "thread_id": <id>, "thread_name": "<name>", "reason": "one short sentence why"}
+- If it's a new topic that deserves its own thread, return JSON: {"route": false, "suggest_new": true, "suggested_name": "<short thread name>", "reason": "one short sentence why"}
+- If it's just casual chat or a question, return JSON: {"route": false, "suggest_new": false}
+Respond with ONLY valid JSON.`,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+    const data = await response.json();
+    if (data.content && data.content[0]) {
+      const raw = data.content[0].text.trim().replace(/```json|```/g, '');
+      return JSON.parse(raw);
+    }
+  } catch(e) {}
+  return null;
+}
+
+function showRoutingSuggestion(routing, text) {
+  const msgContainer = document.getElementById('dashboard-messages');
+
+  if (routing.route) {
+    pendingRoute = { type: 'existing', thread_id: routing.thread_id, text };
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = `${routing.reason} — route this to <strong>${routing.thread_name}</strong>?
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button onclick="confirmRoute()" style="background:var(--purple-bright);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-family:Syne,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Yes, route it</button>
+        <button onclick="dismissRoute()" style="background:var(--white-08);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-family:Syne,sans-serif;font-size:12px;cursor:pointer;">Just chat</button>
+      </div>`;
+    msgContainer.appendChild(div);
+    msgContainer.scrollTop = 999999;
+  } else if (routing.suggest_new) {
+    pendingRoute = { type: 'new', suggested_name: routing.suggested_name, text };
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.innerHTML = `${routing.reason} — start a new thread called <strong>${routing.suggested_name}</strong>?
+      <div style="display:flex;gap:8px;margin-top:10px;">
+        <button onclick="confirmRoute()" style="background:var(--purple-bright);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-family:Syne,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Yes, create it</button>
+        <button onclick="dismissRoute()" style="background:var(--white-08);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;padding:8px 16px;font-family:Syne,sans-serif;font-size:12px;cursor:pointer;">Just chat</button>
+      </div>`;
+    msgContainer.appendChild(div);
+    msgContainer.scrollTop = 999999;
+  } else {
+    return false; // no routing suggestion, fall through to normal chat
+  }
+  return true;
+}
+
+async function confirmRoute() {
+  if (!pendingRoute) return;
+  const msgContainer = document.getElementById('dashboard-messages');
+
+  // Remove the routing suggestion buttons
+  const lastMsg = msgContainer.lastElementChild;
+  if (lastMsg) lastMsg.remove();
+
+  if (pendingRoute.type === 'existing') {
+    // Add note to thread progress and open it
+    const result = await db.from('Threads').select('*').eq('id', pendingRoute.thread_id).single();
+    if (result.data) {
+      const note = '\n\n[Routed from dashboard ' + new Date().toLocaleDateString() + ']\n' + pendingRoute.text;
+      const newProgress = (result.data['Current progress'] || '') + note;
+      await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', pendingRoute.thread_id);
+      pendingRoute = null;
+      openThread(pendingRoute ? pendingRoute.thread_id : result.data.id);
+    }
+  } else if (pendingRoute.type === 'new') {
+    const { data: newThread, error } = await db.from('Threads').insert([{
+      'Thread name': pendingRoute.suggested_name,
+      'Goal': pendingRoute.text,
+      'Status': 'Active',
+      'platform': 'Jarvis'
+    }]).select().single();
+    if (!error && newThread) {
+      pendingRoute = null;
+      loadThreads();
+      openThread(newThread.id);
+    }
+  }
+
+  pendingRoute = null;
+}
+
+function dismissRoute() {
+  pendingRoute = null;
+  const msgContainer = document.getElementById('dashboard-messages');
+  const lastMsg = msgContainer.lastElementChild;
+  if (lastMsg) lastMsg.remove();
+}
+
+// ─── CONTEXT ─────────────────────────────────────────────────────────────────
 
 async function buildMasterContext(threads) {
-  const active = threads.filter(t => t['Status'] === 'Active');
+  const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature');
   const davidCtx = buildDavidContext();
   return `You are Jarvis, a personal AI partner for David Rogers. You are not an assistant — you are a thinking partner who knows David's work deeply.
 
@@ -427,9 +445,8 @@ async function switchToProject(name) {
   const result = await db.from('Threads').select('*');
   if (!result.data) return;
   const match = result.data.find(t => t['Thread name'].toLowerCase().includes(name));
-  if (match) {
-    openThread(match.id);
-  } else {
+  if (match) openThread(match.id);
+  else {
     const msg = `Couldn't find "${name}". Your projects: ${(result.data||[]).map(t => t['Thread name']).join(', ')}`;
     if (currentView === 'dashboard') showDashboardMessage('assistant', msg);
     else addMessage('assistant', msg);
@@ -454,9 +471,7 @@ function addMessage(role, text) {
   div.textContent = text;
   messagesEl.appendChild(div);
   messagesEl.scrollTop = 999999;
-  if (role !== 'assistant' || chatHistory.length === 0) {
-    chatHistory.push({ role, content: text });
-  }
+  if (role !== 'assistant' || chatHistory.length === 0) chatHistory.push({ role, content: text });
   if (role === 'assistant' && text !== '...') speak(text);
 }
 
@@ -471,19 +486,13 @@ function speak(text) {
 // ─── BUILD INTENT ─────────────────────────────────────────────────────────────
 
 function detectBuildIntent(text) {
-  const triggers = [
-    'build', 'create', 'add a', 'i want to track', 'make a', 'new feature',
-    'can you build', 'can jarvis build', 'add feature', 'i need a'
-  ];
+  const triggers = ['build', 'create', 'add a', 'i want to track', 'make a', 'new feature', 'can you build', 'can jarvis build', 'add feature', 'i need a'];
   const lower = text.toLowerCase();
   return triggers.some(t => lower.includes(t));
 }
 
 async function handleBuildRequest(text) {
-  const msgContainer = currentView === 'dashboard'
-    ? document.getElementById('dashboard-messages')
-    : document.getElementById('chat-messages');
-
+  const msgContainer = currentView === 'dashboard' ? document.getElementById('dashboard-messages') : document.getElementById('chat-messages');
   const status = document.createElement('div');
   status.className = 'message assistant';
   status.textContent = 'On it — figuring out what to build...';
@@ -491,7 +500,6 @@ async function handleBuildRequest(text) {
   msgContainer.scrollTop = 999999;
 
   try {
-    // Step 1 — Design schema and UI
     const planRes = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -513,26 +521,18 @@ No markdown, no explanation, just JSON.`,
     const planData = await planRes.json();
     const raw = planData.content[0].text.trim().replace(/```json|```/g, '');
     const plan = JSON.parse(raw);
-
     status.textContent = plan.confirmation;
 
-    // Step 2 — Create Supabase table
     const schemaRes = await fetch('/api/schema', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        action: 'create',
-        table: plan.table,
-        columns: plan.columns
-      })
+      body: JSON.stringify({ action: 'create', table: plan.table, columns: plan.columns })
     });
-
     const schemaData = await schemaRes.json();
     if (!schemaData.success) throw new Error('Schema failed: ' + schemaData.error);
 
     status.textContent = plan.confirmation + ' Building UI...';
 
-    // Step 3 — Generate UI
     const uiRes = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -546,14 +546,13 @@ No markdown, no explanation, just JSON.`,
 - Is clean, minimal, mobile-friendly
 - Has NO external dependencies beyond what is already on the page
 - Returns ONLY the HTML/JS, no explanation, no markdown fences`,
-        messages: [{ role: 'user', content: `Build a UI for table "${plan.table}" with columns: ${plan.columns.map(c => c.name).join(', ')}. ${plan.ui_description}` }]
+        messages: [{ role: 'user', content: `Build a UI for table "${plan.table}" with columns: ${plan.columns.map(c=>c.name).join(', ')}. ${plan.ui_description}` }]
       })
     });
 
     const uiData = await uiRes.json();
     const uiHtml = uiData.content[0].text.trim().replace(/```html|```/g, '');
 
-    // Step 4 — Save as feature thread
     const { data: newThread, error: threadError } = await db.from('Threads').insert([{
       'Thread name': plan.thread_name,
       'Goal': plan.table,
@@ -571,7 +570,6 @@ No markdown, no explanation, just JSON.`,
     msgContainer.appendChild(doneMsg);
     msgContainer.scrollTop = 999999;
 
-    // Reload dashboard thread list
     if (currentView === 'dashboard') loadThreads();
 
   } catch(e) {
@@ -598,29 +596,46 @@ async function sendMessage(inputId) {
 
   if (currentView === 'dashboard') {
     const allResult = await db.from('Threads').select('*');
-    systemContext = await buildMasterContext(allResult.data || []);
+    const threads = allResult.data || [];
+    systemContext = await buildMasterContext(threads);
     showDashboardMessage('user', text);
     chatHistory.push({ role: 'user', content: text });
+
+    // Analyze for routing — run in parallel with chat
+    const routingPromise = analyzeAndRoute(text, threads);
+
     const thinking = document.createElement('div');
     thinking.className = 'message assistant thinking';
     thinking.textContent = '...';
     const msgContainer = document.getElementById('dashboard-messages');
     msgContainer.appendChild(thinking);
     msgContainer.scrollTop = 999999;
+
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ system: systemContext, messages: chatHistory.slice(-10) })
-      });
-      const data = await response.json();
+      const [chatResponse, routing] = await Promise.all([
+        fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ system: systemContext, messages: chatHistory.slice(-10) })
+        }),
+        routingPromise
+      ]);
+
       thinking.remove();
+      const data = await chatResponse.json();
+
       if (data.content && data.content[0]) {
         const reply = data.content[0].text;
         showDashboardMessage('assistant', reply);
         chatHistory.push({ role: 'assistant', content: reply });
         speak(reply);
       }
+
+      // Show routing suggestion after chat response if relevant
+      if (routing && (routing.route || routing.suggest_new)) {
+        setTimeout(() => showRoutingSuggestion(routing, text), 600);
+      }
+
     } catch(e) {
       thinking.remove();
       showDashboardMessage('assistant', 'Error: ' + e.message);
@@ -635,6 +650,7 @@ async function sendMessage(inputId) {
   thinking.textContent = '...';
   document.getElementById('chat-messages').appendChild(thinking);
   document.getElementById('chat-messages').scrollTop = 999999;
+
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
@@ -669,7 +685,7 @@ async function saveProgress() {
   const summary = chatHistory.slice(-6).map(m => (m.role === 'user' ? 'Me: ' : 'Jarvis: ') + m.content).join('\n');
   const newProgress = (currentThread['Current progress'] || '') + '\n\n[Session ' + new Date().toLocaleDateString() + ']\n' + summary;
   const { error } = await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', currentThread.id);
-  if (error) { addMessage('assistant', 'Error saving: ' + error.message); }
+  if (error) addMessage('assistant', 'Error saving: ' + error.message);
   else { currentThread['Current progress'] = newProgress; addMessage('assistant', 'Progress saved.'); updateDavidProfile(summary); }
 }
 
@@ -689,6 +705,7 @@ function backToDashboard() {
   if (isListening && recognition) { isListening = false; recognition.stop(); }
   audioEnabled = false;
   currentView = 'dashboard';
+  pendingRoute = null;
   document.getElementById('dashboard').style.display = 'block';
   document.getElementById('thread-view').style.display = 'none';
   currentThread = null;
@@ -738,7 +755,7 @@ async function saveEditThread() {
     'Note': document.getElementById('et-notes').value.trim(),
   };
   const { error } = await db.from('Threads').update(updates).eq('id', currentThread.id);
-  if (error) { alert('Error: ' + error.message); }
+  if (error) alert('Error: ' + error.message);
   else { Object.assign(currentThread, updates); closeEditThread(); addMessage('assistant', 'Thread updated.'); }
 }
 
@@ -746,7 +763,7 @@ async function deleteThread() {
   if (!currentThread) return;
   if (!confirm('Delete "' + currentThread['Thread name'] + '"? Cannot be undone.')) return;
   const { error } = await db.from('Threads').delete().eq('id', currentThread.id);
-  if (error) { alert('Error: ' + error.message); }
+  if (error) alert('Error: ' + error.message);
   else {
     document.getElementById('edit-thread-view').style.display = 'none';
     document.getElementById('dashboard').style.display = 'block';
@@ -893,7 +910,6 @@ document.getElementById('new-thread-btn').addEventListener('click', openNewThrea
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
-// Expose db globally so generated feature UIs can access it
 window.db = db;
 
 loadDavidProfile().then(() => {
