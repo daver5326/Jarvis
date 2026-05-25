@@ -456,6 +456,14 @@ async function sendMessage(inputId) {
   if (!text) return;
   input.value = '';
 
+    // Route build requests
+  if (detectBuildIntent(text)) {
+    if (currentView === 'dashboard') showDashboardMessage('user', text);
+    else addMessage('user', text);
+    handleBuildRequest(text);
+    return;
+  }
+
   if (currentView === 'dashboard') {
     const allResult = await db.from('Threads').select('*');
     systemContext = await buildMasterContext(allResult.data || []);
