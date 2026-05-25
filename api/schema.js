@@ -25,13 +25,17 @@ export default async function handler(req, res) {
       headers: {
         'Content-Type': 'application/json',
         'apikey': serviceKey,
-        'Authorization': `Bearer ${serviceKey}`
+        'Authorization': `Bearer ${serviceKey}`,
+        'Prefer': 'return=minimal'
       },
       body: JSON.stringify({ sql })
     });
 
-    const data = await response.json();
-    if (data.error) throw new Error(data.error);
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(errText);
+    }
+
     res.status(200).json({ success: true, action, table });
 
   } catch(e) {
