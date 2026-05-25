@@ -64,7 +64,8 @@ const TRIAGE_DAYS = 14;
 function getLastActivityDate(thread) {
   // Check for saved session timestamps in progress notes
   const progress = thread['Current progress'] || '';
-  const lastSaved = progress.match(/\[(?:Auto-saved|Session) ([^\]]+)\]/g);
+  const lastSaved = progress.match(/\[(?:Auto-saved|Session|Reactivated) ([^\]]+)\]/g);
+
   if (lastSaved) {
     const lastEntry = lastSaved[lastSaved.length - 1];
     const dateStr = lastEntry.replace(/\[(?:Auto-saved|Session) /, '').replace(']', '').split(' ')[0];
