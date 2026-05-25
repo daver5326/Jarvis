@@ -133,47 +133,69 @@ function showTriageScreen(thread) {
   addMessage('assistant', `${thread['Thread name']} has been quiet for ${daysText}. What do you want to do with it?`);
 }
 
+async function openThreadDirect(thread) {
+  currentThread = thread;
+  chatHistory = [];
+  audioEnabled = false;
+  isListening = false;
+  currentView = 'thread';
+  pendingRoute = null;
+
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('thread-view').style.display = 'flex';
+  document.getElementById('thread-title').textContent = currentThread['Thread name'];
+  document.getElementById('chat-messages').innerHTML = '';
+  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading...</p>';
+
+  const micBtn = document.getElementById('mic-btn');
+  micBtn.textContent = '🎤';
+  micBtn.style.opacity = '1';
+
+  const ideas = (await db.from('Ideas').select('*').eq('thread_id', thread.id)).data || [];
+  const board = buildBoardFromThread(currentThread, ideas);
+  renderBoard(board);
+
+  generateInsightCard(currentThread, ideas).then(insight => {
+    if (insight) injectInsight(insight);
+    else { const card = document.getElementById('insight-card'); if (card) card.style.display = 'none'; }
+  });
+
+  const allThreadsResult = await db.from('Threads').select('*');
+  const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== thread.id && t['Status'] === 'Active');
+  const davidCtx = buildDavidContext();
+  const crossThreadContext = otherThreads.length > 0 ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => `- ${t['Thread name']}: ${t['Goal']?t['Goal'].slice(0,100):'No goal'}`).join('\n') : '';
+  const recentProgress = currentThread['Current progress'] ? '\n\nRECENT HISTORY:\n' + currentThread['Current progress'].slice(-2000) : '';
+
+  systemContext = `You are Jarvis, a personal AI partner for David Rogers.\n\n${davidCtx}\n\nCURRENT PROJECT: "${currentThread['Thread name']}"\nGoal: ${currentThread['Goal']}\nStatus: ${currentThread['Status']}\nNext Steps: ${currentThread['Next step']}\nDecisions Made: ${currentThread['Decisions made']}\nOpen Questions: ${currentThread['Open question']}${recentProgress}${crossThreadContext}\n\nKeep responses short and conversational. No markdown.`;
+}
+
 async function triageReactivate(id) {
   const result = await db.from('Threads').select('*').eq('id', id).single();
   if (!result.data) return;
   const note = '\n\n[Reactivated ' + new Date().toLocaleDateString() + ']';
   const newProgress = (result.data['Current progress'] || '') + note;
   await db.from('Threads').update({ 'Current progress': newProgress }).eq('id', id);
-  currentThread = { ...result.data, 'Current progress': newProgress };
-  loadThreads();
-  // Bypass triage check — open board directly
-  document.getElementById('dashboard').style.display = 'none';
-  document.getElementById('thread-view').style.display = 'flex';
-  document.getElementById('thread-title').textContent = currentThread['Thread name'];
-  document.getElementById('chat-messages').innerHTML = '';
-  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading...</p>';
-  const ideas = (await db.from('Ideas').select('*').eq('thread_id', id)).data || [];
-  const board = buildBoardFromThread(currentThread, ideas);
-  renderBoard(board);
-  generateInsightCard(currentThread, ideas).then(insight => {
-    if (insight) injectInsight(insight);
-    else { const card = document.getElementById('insight-card'); if (card) card.style.display = 'none'; }
-  });
-  const allThreadsResult = await db.from('Threads').select('*');
-  const otherThreads = (allThreadsResult.data || []).filter(t => t.id !== id && t['Status'] === 'Active');
-  const davidCtx = buildDavidContext();
-  const crossThreadContext = otherThreads.length > 0 ? '\n\nOTHER ACTIVE PROJECTS:\n' + otherThreads.map(t => `- ${t['Thread name']}: ${t['Goal']?t['Goal'].slice(0,100):'No goal'}`).join('\n') : '';
-  systemContext = `You are Jarvis, a personal AI partner for David Rogers.\n\n${davidCtx}\n\nCURRENT PROJECT: "${currentThread['Thread name']}"\nGoal: ${currentThread['Goal']}\nStatus: ${currentThread['Status']}\nNext Steps: ${currentThread['Next step']}\nDecisions Made: ${currentThread['Decisions made']}\nOpen Questions: ${currentThread['Open question']}${crossThreadContext}\n\nDavid just reactivated this thread after a break. Help him re-engage. Keep it short and direct. No markdown.`;
-  addMessage('assistant', `Back on ${currentThread['Thread name']}. Let\'s pick it up — next step was: ${currentThread['Next step'] || 'not set'}.`);
+  const updatedThread = { ...result.data, 'Current progress': newProgress };
+  setTimeout(() => loadThreads(), 1000);
+  await openThreadDirect(updatedThread);
+  addMessage('assistant', `Back on ${updatedThread['Thread name']}. Next step was: ${updatedThread['Next step'] || 'not set'} — still the right move?`);
 }
 
 async function triageReview(id) {
-  // Open the thread normally — let David see the board and progress
-  openThread(id);
+  const result = await db.from('Threads').select('*').eq('id', id).single();
+  if (!result.data) return;
+  await openThreadDirect(result.data);
+  addMessage('assistant', `Reviewing ${result.data['Thread name']}. Take a look at the board — what do you want to do with it?`);
 }
 
 async function triageArchive(id) {
   if (!confirm('Archive this thread? It will be marked Complete and moved out of active view.')) return;
   await db.from('Threads').update({ 'Status': 'Complete' }).eq('id', id);
-  loadThreads();
+  setTimeout(() => loadThreads(), 500);
   backToDashboard();
-  showDashboardMessage('assistant', 'Archived. Good call — keeping things clean.');
+  setTimeout(() => showDashboardMessage('assistant', 'Archived. Good call — keeping things clean.'), 300);
 }
+
 
 // ─── THREADS / DASHBOARD ─────────────────────────────────────────────────────
 
