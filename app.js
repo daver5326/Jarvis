@@ -87,9 +87,12 @@ async function loadThreads() {
     const active = [];
     const triage = [];
     const other = [];
+    const features = [];
 
     threads.forEach(t => {
-      if (t['Status'] === 'Active' && isInTriage(t)) {
+      if (t['thread_type'] === 'feature') {
+        features.push(t);
+      } else if (t['Status'] === 'Active' && isInTriage(t)) {
         triage.push(t);
       } else if (t['Status'] === 'Active') {
         active.push(t);
@@ -101,17 +104,27 @@ async function loadThreads() {
     const renderCard = (thread) => {
       const isComplete = thread['Status'] === 'Complete';
       const isPaused = thread['Status'] === 'Paused';
-      return `<div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''}" onclick="openThread(${thread.id})">
-        <div class="platform-badge">${thread.platform || 'Claude'}</div>
+      const isFeature = thread['thread_type'] === 'feature';
+      return `<div class="thread-card ${isPaused ? 'paused' : ''} ${isComplete ? 'complete' : ''} ${isFeature ? 'feature' : ''}" onclick="openThread(${thread.id})">
+        <div class="platform-badge">${isFeature ? 'Feature' : (thread.platform || 'Claude')}</div>
         <h2>${thread['Thread name']}</h2>
-        <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : 'No next step set'}</p>
+        <p class="thread-status">${thread['Status'] || 'Active'} · ${thread['Next step'] ? thread['Next step'].slice(0,60) + '...' : (isFeature ? 'Tap to use' : 'No next step set')}</p>
       </div>`;
     };
 
     let html = '';
     if (active.length > 0) html += active.map(renderCard).join('');
+    if (features.length > 0) {
+      html += `<div class="triage-section" style="border-top-color:rgba(123,47,255,0.3);">
+        <div class="triage-header">
+          <div class="triage-dot" style="background:var(--purple-bright);box-shadow:0 0 7px var(--purple-bright);"></div>
+          <span class="triage-label" style="color:var(--purple-glow);">Built by Jarvis</span>
+          <span class="triage-count" style="background:rgba(123,47,255,0.12);color:var(--purple-glow);">${features.length}</span>
+        </div>
+        ${features.map(renderCard).join('')}
+      </div>`;
+    }
     if (other.length > 0) html += other.map(renderCard).join('');
-
     if (triage.length > 0) {
       html += `<div class="triage-section">
         <div class="triage-header">
@@ -140,9 +153,7 @@ async function loadThreads() {
 function buildBoardFromThread(thread, ideas) {
   const board = {};
 
-  if (thread['Goal']) {
-    board.where = thread['Goal'];
-  }
+  if (thread['Goal']) board.where = thread['Goal'];
 
   if (thread['Next step']) {
     board.moving = [{
@@ -209,9 +220,7 @@ Banked Ideas: ${(ideas || []).map(i => i.idea_text).join(' | ') || 'None'}`;
       })
     });
     const data = await response.json();
-    if (data.content && data.content[0]) {
-      return data.content[0].text.trim();
-    }
+    if (data.content && data.content[0]) return data.content[0].text.trim();
   } catch(e) {}
   return null;
 }
@@ -285,6 +294,24 @@ function injectInsight(text) {
   }
 }
 
+// ─── FEATURE UI RENDERER ─────────────────────────────────────────────────────
+
+function renderFeatureUI(thread) {
+  const container = document.getElementById('board-content');
+  try {
+    const html = thread['custom_ui'] || '<p class="loading">No UI generated yet.</p>';
+    container.innerHTML = html;
+    // Execute any scripts in the injected HTML
+    container.querySelectorAll('script').forEach(oldScript => {
+      const newScript = document.createElement('script');
+      newScript.textContent = oldScript.textContent;
+      oldScript.parentNode.replaceChild(newScript, oldScript);
+    });
+  } catch(e) {
+    container.innerHTML = '<p class="loading">Error rendering feature: ' + e.message + '</p>';
+  }
+}
+
 // ─── CARD DETAIL OVERLAY ─────────────────────────────────────────────────────
 
 function openCardDetail(title, zone, color, body, why, next) {
@@ -316,12 +343,22 @@ async function openThread(id) {
   document.getElementById('thread-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
-  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading board...</p>';
+  document.getElementById('board-content').innerHTML = '<p class="loading" style="margin-top:16px;">Loading...</p>';
 
   const micBtn = document.getElementById('mic-btn');
   micBtn.textContent = '🎤';
   micBtn.style.opacity = '1';
 
+  // Feature thread — render custom UI
+  if (currentThread['thread_type'] === 'feature') {
+    renderFeatureUI(currentThread);
+    const davidCtx = buildDavidContext();
+    systemContext = `You are Jarvis. David is using a feature you built: "${currentThread['Thread name']}". The underlying table is "${currentThread['Goal']}". Help him use it, add entries, view data, or modify it. Keep responses short and conversational. No markdown.`;
+    addMessage('assistant', `${currentThread['Thread name']} — ready to use. What would you like to do?`);
+    return;
+  }
+
+  // Standard thread — render board
   const ideasResult = await db.from('Ideas').select('*').eq('thread_id', id);
   const ideas = ideasResult.data || [];
 
@@ -454,6 +491,7 @@ async function handleBuildRequest(text) {
   msgContainer.scrollTop = 999999;
 
   try {
+    // Step 1 — Design schema and UI
     const planRes = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -461,9 +499,11 @@ async function handleBuildRequest(text) {
         system: `You are Jarvis, a builder. David has requested something to be built.
 You must respond with ONLY valid JSON in this exact structure:
 {
-  "table": "table_name",
+  "table": "snake_case_table_name",
+  "thread_name": "Human readable name for this feature",
   "columns": [{"name": "col_name", "type": "text|integer|boolean|timestamptz"}],
-  "confirmation": "One sentence telling David exactly what you are building."
+  "confirmation": "One sentence telling David exactly what you are building.",
+  "ui_description": "Brief description of what the UI should do — form to add entries, list to view them, etc."
 }
 No markdown, no explanation, just JSON.`,
         messages: [{ role: 'user', content: text }]
@@ -476,6 +516,7 @@ No markdown, no explanation, just JSON.`,
 
     status.textContent = plan.confirmation;
 
+    // Step 2 — Create Supabase table
     const schemaRes = await fetch('/api/schema', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -489,11 +530,49 @@ No markdown, no explanation, just JSON.`,
     const schemaData = await schemaRes.json();
     if (!schemaData.success) throw new Error('Schema failed: ' + schemaData.error);
 
+    status.textContent = plan.confirmation + ' Building UI...';
+
+    // Step 3 — Generate UI
+    const uiRes = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: `You are Jarvis building a UI component. Generate a self-contained HTML+JS snippet that:
+- Uses the Supabase client already available as window.db (already initialized)
+- Matches this color scheme: purple/gold dark theme, CSS variables --purple-bright, --gold, --white-08, --border, --text-primary, --text-secondary
+- Uses font-family DM Sans and Syne (already loaded)
+- Has a form to add new entries and a list/table to view recent entries
+- Calls Supabase directly: await window.db.from('TABLE_NAME').insert([...]) and .select()
+- Is clean, minimal, mobile-friendly
+- Has NO external dependencies beyond what is already on the page
+- Returns ONLY the HTML/JS, no explanation, no markdown fences`,
+        messages: [{ role: 'user', content: `Build a UI for table "${plan.table}" with columns: ${plan.columns.map(c => c.name).join(', ')}. ${plan.ui_description}` }]
+      })
+    });
+
+    const uiData = await uiRes.json();
+    const uiHtml = uiData.content[0].text.trim().replace(/```html|```/g, '');
+
+    // Step 4 — Save as feature thread
+    const { data: newThread, error: threadError } = await db.from('Threads').insert([{
+      'Thread name': plan.thread_name,
+      'Goal': plan.table,
+      'Status': 'Active',
+      'thread_type': 'feature',
+      'custom_ui': uiHtml,
+      'platform': 'Jarvis'
+    }]).select().single();
+
+    if (threadError) throw new Error('Thread save failed: ' + threadError.message);
+
     const doneMsg = document.createElement('div');
     doneMsg.className = 'message assistant';
-    doneMsg.textContent = `Done. "${plan.table}" is ready in your database. UI coming next.`;
+    doneMsg.textContent = `Done. "${plan.thread_name}" is ready — find it in your dashboard under Built by Jarvis.`;
     msgContainer.appendChild(doneMsg);
     msgContainer.scrollTop = 999999;
+
+    // Reload dashboard thread list
+    if (currentView === 'dashboard') loadThreads();
 
   } catch(e) {
     status.textContent = 'Build failed: ' + e.message;
@@ -704,7 +783,7 @@ async function saveNewThread() {
 async function greetOnLoad() {
   const result = await db.from('Threads').select('*');
   const threads = result.data || [];
-  const active = threads.filter(t => t['Status'] === 'Active');
+  const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature');
   if (active.length === 0) return;
 
   const hour = new Date().getHours();
@@ -813,6 +892,9 @@ document.getElementById('dashboard-input').addEventListener('keypress', function
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
+
+// Expose db globally so generated feature UIs can access it
+window.db = db;
 
 loadDavidProfile().then(() => {
   loadThreads().then(() => {
