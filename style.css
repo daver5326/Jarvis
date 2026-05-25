@@ -715,3 +715,90 @@ select.form-input option { background: var(--purple-dark); color: #f0eaff; }
   padding: 8px 14px;
   letter-spacing: 0.02em;
 }
+/* ─── TRIAGE SCREEN ─────────────────────────────────────────────────────── */
+
+.triage-screen {
+  padding: 20px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.triage-screen-eyebrow {
+  font-family: 'Syne', sans-serif;
+  font-size: 9px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold-dim);
+  font-weight: 700;
+}
+
+.triage-screen-title {
+  font-family: 'Syne', sans-serif;
+  font-size: 22px;
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -0.02em;
+}
+
+.triage-screen-meta {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.triage-screen-goal {
+  font-size: 13px;
+  color: rgba(240,234,255,0.6);
+  line-height: 1.5;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
+
+.triage-screen-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.triage-action-btn {
+  background: var(--white-08);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  grid-template-rows: auto auto;
+  gap: 2px 10px;
+  text-align: left;
+  transition: background 0.18s;
+}
+
+.triage-action-btn:active { background: var(--white-15); }
+
+.triage-action-btn.reactivate { border-left: 3px solid #34d399; }
+.triage-action-btn.review     { border-left: 3px solid #60a5fa; }
+.triage-action-btn.archive    { border-left: 3px solid var(--gold-dim); }
+
+.triage-action-icon {
+  grid-row: 1 / 3;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+}
+
+.triage-action-label {
+  font-family: 'Syne', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: #fff;
+  align-self: end;
+}
+
+.triage-action-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  align-self: start;
+}
