@@ -1183,8 +1183,7 @@ async function greetOnLoad() {
   const active = threads.filter(t => t['Status'] === 'Active' && t['thread_type'] !== 'feature' && !isInTriage(t));
   if (active.length === 0) return;
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const greeting = 'Hey David';
   const suggested = active.find(t => t['Next step']) || active[0];
   const masterCtx = await buildMasterContext(threads);
   systemContext = masterCtx;
