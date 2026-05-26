@@ -813,6 +813,11 @@ async function sendMessage(inputId) {
       handleThreadUpdate(text, threads);
       return;
     }
+if (detectBuildIntent(text)) {
+  addMessage('user', text);
+  handleBuildRequest(text);
+  return;
+}
 
     if (detectBuildIntent(text)) {
       showDashboardMessage('user', text);
@@ -865,6 +870,13 @@ async function sendMessage(inputId) {
   }
 
   // Build intent in thread view
+ 
+  if (detectBuildIntent(text)) {
+  addMessage('user', text);
+  handleBuildRequest(text);
+  return;
+}
+
   if (detectBuildIntent(text)) {
     addMessage('user', text);
     handleBuildRequest(text);
