@@ -1191,6 +1191,8 @@ async function handleSelfModifyRequest(instruction) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+                max_tokens: 8000,
+
         system: `You are Jarvis's code modification engine. David has asked you to modify app.js.
 Return ONLY a JSON object:
 {
