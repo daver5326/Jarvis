@@ -824,6 +824,11 @@ if (detectBuildIntent(text)) {
       handleBuildRequest(text);
       return;
     }
+if (detectSelfModifyIntent(text)) {
+  showDashboardMessage('user', text);
+  handleSelfModifyRequest(text);
+  return;
+}
 
     systemContext = await buildMasterContext(threads);
     showDashboardMessage('user', text);
