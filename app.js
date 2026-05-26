@@ -1191,21 +1191,43 @@ async function handleSelfModifyRequest(instruction) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-                max_tokens: 8000,
-
-        system: `You are Jarvis's code modification engine. David has asked you to modify app.js.
-Return ONLY a JSON object:
+        system: `You are Jarvis's code modification engine. David wants to change app.js.
+Return ONLY a JSON object with this structure:
 {
-  "summary": "One sentence describing what you changed and why.",
-  "updatedCode": "<the complete updated app.js as a string>"
+  "summary": "One sentence describing the change.",
+  "find": "the exact string to find in the current code",
+  "replace": "the new string to replace it with"
 }
-Rules: return the ENTIRE file, make only the requested change, no added comments, valid JavaScript only, ONLY the JSON object no markdown.`,
+Rules:
+- "find" must be an exact unique substring from the current code
+- "replace" is what it becomes after the change
+- Keep find/replace as short as possible — just the changed portion
+- No markdown, no explanation, ONLY the JSON object`,
         messages: [{
           role: 'user',
           content: `Instruction: ${instruction}\n\nCurrent app.js:\n${currentCode}`
         }]
       })
     });
+
+    const proposeData = await proposeRes.json();
+    const raw = proposeData.content[0].text.trim().replace(/```json|```/g, '');
+    const proposal = JSON.parse(raw);
+
+    if (!currentCode.includes(proposal.find)) {
+      throw new Error('Could not locate the code section to change.');
+    }
+
+    const updatedCode = currentCode.replace(proposal.find, proposal.replace);
+
+    status.remove();
+    showStagedChange(proposal.summary, updatedCode, msgContainer);
+
+  } catch(e) {
+    status.textContent = 'Self-modify failed: ' + e.message;
+  }
+}
+
 
     const proposeData = await proposeRes.json();
     const raw = proposeData.content[0].text.trim().replace(/```json|```/g, '');
