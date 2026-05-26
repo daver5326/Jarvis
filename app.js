@@ -687,14 +687,11 @@ Always include thread_id, thread_name, and Current progress. Only include other 
     const current = validThread;
     const updates = {};
 
-    if (plan.updates['Goal']) updates['Goal'] = plan.updates['Goal'];
+        if (plan.updates['Goal']) updates['Goal'] = plan.updates['Goal'];
     if (plan.updates['Next step']) updates['Next step'] = plan.updates['Next step'];
-    if (plan.updates['Decisions made']) {
-      updates['Decisions made'] = (current['Decisions made'] ? current['Decisions made'] + '\n' : '') + plan.updates['Decisions made'];
-    }
-    if (plan.updates['Open question']) {
-      updates['Open question'] = (current['Open question'] ? current['Open question'] + '\n' : '') + plan.updates['Open question'];
-    }
+    if (plan.updates['Decisions made']) updates['Decisions made'] = plan.updates['Decisions made'];
+    if (plan.updates['Open question']) updates['Open question'] = plan.updates['Open question'];
+
     if (plan.updates['Current progress']) {
       updates['Current progress'] = (current['Current progress'] || '') + '\n\n[Session ' + new Date().toLocaleDateString() + ']\n' + plan.updates['Current progress'];
     }
