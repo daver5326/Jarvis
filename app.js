@@ -1136,6 +1136,142 @@ document.getElementById('dashboard-input').addEventListener('keypress', function
 });
 document.getElementById('new-thread-btn').addEventListener('click', openNewThreadForm);
 
+// ─── SELF-MODIFY ──────────────────────────────────────────────────────────────
+
+function detectSelfModifyIntent(text) {
+  const triggers = ['update yourself', 'modify yourself', 'change your code', 'update your code',
+    'rewrite yourself', 'update jarvis code', 'change jarvis', 'modify jarvis',
+    'update the app', 'change the app', 'fix the app', 'improve the app',
+    'add to yourself', 'update app.js'];
+  const lower = text.toLowerCase();
+  return triggers.some(t => lower.includes(t));
+}
+
+async function handleSelfModifyRequest(instruction) {
+  const msgContainer = currentView === 'dashboard'
+    ? document.getElementById('dashboard-messages')
+    : document.getElementById('chat-messages');
+
+  const status = document.createElement('div');
+  status.className = 'message assistant';
+  status.textContent = 'Reading my own code...';
+  msgContainer.appendChild(status);
+  msgContainer.scrollTop = 999999;
+
+  try {
+    const readRes = await fetch('/api/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read' })
+    });
+    const readData = await readRes.json();
+    if (!readData.success) throw new Error('Could not read code: ' + readData.error);
+
+    const currentCode = readData.content;
+    status.textContent = 'Got it. Thinking through the change...';
+
+    const proposeRes = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: `You are Jarvis's code modification engine. David has asked you to modify app.js.
+Return ONLY a JSON object:
+{
+  "summary": "One sentence describing what you changed and why.",
+  "updatedCode": "<the complete updated app.js as a string>"
+}
+Rules: return the ENTIRE file, make only the requested change, no added comments, valid JavaScript only, ONLY the JSON object no markdown.`,
+        messages: [{
+          role: 'user',
+          content: `Instruction: ${instruction}\n\nCurrent app.js:\n${currentCode}`
+        }]
+      })
+    });
+
+    const proposeData = await proposeRes.json();
+    const raw = proposeData.content[0].text.trim().replace(/```json|```/g, '');
+    const proposal = JSON.parse(raw);
+
+    status.remove();
+    showStagedChange(proposal.summary, proposal.updatedCode, msgContainer);
+
+  } catch(e) {
+    status.textContent = 'Self-modify failed: ' + e.message;
+  }
+}
+
+function showStagedChange(summary, updatedCode, container) {
+  const div = document.createElement('div');
+  div.className = 'message assistant';
+  div.id = 'staged-change-msg';
+  div.innerHTML = `
+    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:6px;letter-spacing:0.05em;">STAGED CHANGE</div>
+    <div style="font-size:15px;margin-bottom:14px;">${summary}</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button id="confirm-deploy-btn" style="background:var(--purple-bright);color:#fff;border:none;border-radius:8px;padding:9px 18px;font-family:Syne,sans-serif;font-size:12px;font-weight:700;cursor:pointer;">Deploy this</button>
+      <button id="cancel-deploy-btn" style="background:var(--white-08);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;padding:9px 18px;font-family:Syne,sans-serif;font-size:12px;cursor:pointer;">Cancel</button>
+    </div>`;
+  container.appendChild(div);
+  container.scrollTop = 999999;
+
+  document.getElementById('confirm-deploy-btn').onclick = () => confirmDeploy(updatedCode, summary, div, container);
+  document.getElementById('cancel-deploy-btn').onclick = () => {
+    div.remove();
+    const cancelled = document.createElement('div');
+    cancelled.className = 'message assistant';
+    cancelled.textContent = 'Change cancelled. Nothing was deployed.';
+    container.appendChild(cancelled);
+  };
+}
+
+async function confirmDeploy(updatedCode, summary, stagedDiv, container) {
+  stagedDiv.remove();
+  const status = document.createElement('div');
+  status.className = 'message assistant';
+  status.textContent = 'Deploying...';
+  container.appendChild(status);
+  container.scrollTop = 999999;
+
+  try {
+    const deployRes = await fetch('/api/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'write',
+        content: updatedCode,
+        commitMessage: 'Jarvis self-update: ' + summary
+      })
+    });
+    const deployData = await deployRes.json();
+    if (!deployData.success) throw new Error(deployData.error);
+
+    status.innerHTML = `Deployed. Live in ~30 seconds.
+      <div style="margin-top:10px;">
+        <button onclick="handleRollback(this)" style="background:var(--white-08);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;padding:7px 14px;font-family:Syne,sans-serif;font-size:11px;cursor:pointer;">↩ Rollback if broken</button>
+      </div>`;
+  } catch(e) {
+    status.textContent = 'Deploy failed: ' + e.message;
+  }
+}
+
+async function handleRollback(btn) {
+  btn.textContent = 'Rolling back...';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rollback' })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    btn.closest('.message').textContent = 'Rolled back. Previous version deploying now.';
+  } catch(e) {
+    btn.textContent = 'Rollback failed: ' + e.message;
+    btn.disabled = false;
+  }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
 window.db = db;
