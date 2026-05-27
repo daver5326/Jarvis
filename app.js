@@ -836,10 +836,11 @@ Return ONLY a JSON object with this structure:
   "replace": "the new string to replace it with"
 }
 Rules:
-- "find" must be a unique substring that exists VERBATIM in the code provided
-- Copy "find" character-for-character from the code — no paraphrasing, no reformatting
-- Keep "find" short — 1 to 3 lines maximum
-- "replace" is the new version of that exact string
+- Think first about what behavior the user wants, then find the right code to change
+- "find" must be copied character-for-character from the provided code — no paraphrasing
+- Keep "find" to 1-3 lines, just enough to be unique
+- No markdown, no explanation, ONLY the JSON object`,
+
 - No markdown, no explanation, ONLY the JSON object`,
         messages: [{
           role: 'user',
