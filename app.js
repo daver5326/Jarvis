@@ -843,7 +843,7 @@ Rules:
 - No markdown, no explanation, ONLY the JSON object`,
         messages: [{
           role: 'user',
-          content: `Instruction: ${instruction}\n\nCurrent app.js:\n${currentCode}`
+          content: `Instruction: ${instruction}\n\nCurrent file: app.js\n\nCurrent code:\n${currentCode}`
         }]
       })
     });
