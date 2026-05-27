@@ -836,10 +836,11 @@ Return ONLY a JSON object with this structure:
   "replace": "the new string to replace it with"
 }
 Rules:
-- "find" must be an exact unique substring from the current code
-- "replace" is what it becomes after the change
-- Keep find/replace as short as possible — just the changed portion
-- No markdown, no explanation, ONLY the JSON object`,
+- "find" must be a unique substring that exists VERBATIM in the code provided
+- Copy "find" character-for-character from the code — no paraphrasing, no reformatting
+- Keep "find" short — 1 to 3 lines maximum
+- "replace" is the new version of that exact string
+
         messages: [{
           role: 'user',
           content: `Instruction: ${instruction}\n\nCurrent app.js:\n${currentCode}`
