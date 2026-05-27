@@ -916,7 +916,21 @@ console.log('${plan.display_name} ready');`
       if (newThread) threadId = newThread.id;
     }
 
-    status.textContent = `Done. "${plan.display_name}" repo is live at github.com/${repoData.repo}. Next: connect it to Vercel to deploy.`;
+    status.textContent = `Repo ready. Connecting to Vercel...`;
+
+const vercelRes = await fetch('/api/vercel-deploy', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ repo: repoData.repo, projectName: plan.repo_name })
+});
+const vercelData = await vercelRes.json();
+
+if (vercelData.success) {
+  status.textContent = `Done. "${plan.display_name}" is live at ${vercelData.url}`;
+} else {
+  status.textContent = `Repo created but Vercel connection failed: ${vercelData.error}`;
+}
+
     if (currentView === 'dashboard') loadThreads();
 
   } catch(e) {
