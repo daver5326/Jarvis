@@ -140,6 +140,7 @@ async function openThreadDirect(thread) {
   pendingRoute = null;
 
   document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('dashboard-messages').innerHTML = '';
   document.getElementById('thread-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
@@ -412,6 +413,7 @@ async function openThread(id) {
   }
 
   document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('dashboard-messages').innerHTML = '';
   document.getElementById('thread-view').style.display = 'flex';
   document.getElementById('thread-title').textContent = currentThread['Thread name'];
   document.getElementById('chat-messages').innerHTML = '';
