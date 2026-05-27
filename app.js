@@ -812,11 +812,13 @@ async function handleSelfModifyRequest(instruction) {
   msgContainer.appendChild(status);
   msgContainer.scrollTop = 999999;
 
+  const targetRepo = currentThread?.github_repo || null;
+
   try {
     const readRes = await fetch('/api/deploy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'read' })
+      body: JSON.stringify({ action: 'read', repo: targetRepo })
     });
     const readData = await readRes.json();
     if (!readData.success) throw new Error('Could not read code: ' + readData.error);
@@ -858,15 +860,14 @@ Rules:
     const updatedCode = previewLines.join('\n');
 
     status.remove();
-    showStagedChange(proposal.summary, updatedCode, msgContainer);
+    showStagedChange(proposal.summary, updatedCode, msgContainer, targetRepo);
 
   } catch(e) {
     status.textContent = 'Self-modify failed: ' + e.message;
   }
 }
 
-
-function showStagedChange(summary, updatedCode, container) {
+function showStagedChange(summary, updatedCode, container, targetRepo) {
   const div = document.createElement('div');
   div.className = 'message assistant';
   div.id = 'staged-change-msg';
@@ -880,7 +881,7 @@ function showStagedChange(summary, updatedCode, container) {
   container.appendChild(div);
   container.scrollTop = 999999;
 
-  document.getElementById('confirm-deploy-btn').onclick = () => confirmDeploy(updatedCode, summary, div, container);
+  document.getElementById('confirm-deploy-btn').onclick = () => confirmDeploy(updatedCode, summary, div, container, targetRepo);
   document.getElementById('cancel-deploy-btn').onclick = () => {
     div.remove();
     const cancelled = document.createElement('div');
@@ -890,7 +891,7 @@ function showStagedChange(summary, updatedCode, container) {
   };
 }
 
-async function confirmDeploy(updatedCode, summary, stagedDiv, container) {
+async function confirmDeploy(updatedCode, summary, stagedDiv, container, targetRepo) {
   stagedDiv.remove();
   const status = document.createElement('div');
   status.className = 'message assistant';
@@ -905,7 +906,8 @@ async function confirmDeploy(updatedCode, summary, stagedDiv, container) {
       body: JSON.stringify({
         action: 'write',
         content: updatedCode,
-        commitMessage: 'Jarvis self-update: ' + summary
+        commitMessage: 'Jarvis self-update: ' + summary,
+        repo: targetRepo || null
       })
     });
     const deployData = await deployRes.json();
@@ -927,7 +929,7 @@ async function handleRollback(btn) {
     const res = await fetch('/api/deploy', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'rollback' })
+      body: JSON.stringify({ action: 'rollback', repo: currentThread?.github_repo || null })
     });
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
