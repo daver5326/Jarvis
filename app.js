@@ -822,6 +822,7 @@ async function handleSelfModifyRequest(instruction) {
     if (!readData.success) throw new Error('Could not read code: ' + readData.error);
 
     const currentCode = readData.content;
+    const lines = currentCode.split('\n');
     status.textContent = 'Got it. Thinking through the change...';
 
     const proposeRes = await fetch('/api/chat', {
@@ -829,16 +830,16 @@ async function handleSelfModifyRequest(instruction) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         system: `You are Jarvis's code modification engine. David wants to change app.js.
-Return ONLY a JSON object with this structure:
+The file has ${lines.length} lines. Return ONLY a JSON object with this structure:
 {
   "summary": "One sentence describing the change.",
-  "find": "the exact string to find in the current code",
-  "replace": "the new string to replace it with"
+  "startLine": 42,
+  "endLine": 48,
+  "replacement": "the new code that replaces those lines"
 }
 Rules:
-- "find" must be an exact unique substring from the current code
-- "replace" is what it becomes after the change
-- Keep find/replace as short as possible — just the changed portion
+- startLine and endLine are 1-indexed and inclusive
+- replacement uses \\n for newlines
 - No markdown, no explanation, ONLY the JSON object`,
         messages: [{
           role: 'user',
@@ -851,11 +852,11 @@ Rules:
     const raw = proposeData.content[0].text.trim().replace(/```json|```/g, '');
     const proposal = JSON.parse(raw);
 
-    if (!currentCode.includes(proposal.find)) {
-      throw new Error('Could not locate the code section to change.');
-    }
+    const previewLines = lines.slice(0, proposal.startLine - 1)
+      .concat(proposal.replacement.split('\n'))
+      .concat(lines.slice(proposal.endLine));
+    const updatedCode = previewLines.join('\n');
 
-    const updatedCode = currentCode.replace(proposal.find, proposal.replace);
     status.remove();
     showStagedChange(proposal.summary, updatedCode, msgContainer);
 
@@ -863,6 +864,7 @@ Rules:
     status.textContent = 'Self-modify failed: ' + e.message;
   }
 }
+
 
 function showStagedChange(summary, updatedCode, container) {
   const div = document.createElement('div');
