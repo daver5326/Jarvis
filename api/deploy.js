@@ -4,7 +4,8 @@ export default async function handler(req, res) {
 
   const { action, content, commitMessage } = req.body;
   const token = process.env.GITHUB_TOKEN;
-  const repo = process.env.GITHUB_REPO;
+  const repo = req.body.repo || process.env.GITHUB_REPO;
+
   const branch = process.env.GITHUB_BRANCH || 'main';
   const filePath = req.body.file || 'app.js';
 
