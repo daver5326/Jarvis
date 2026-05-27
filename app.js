@@ -918,18 +918,9 @@ console.log('${plan.display_name} ready');`
 
     status.textContent = `Repo ready. Connecting to Vercel...`;
 
-const vercelRes = await fetch('/api/vercel-deploy', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ repo: repoData.repo, projectName: plan.repo_name })
-});
-const vercelData = await vercelRes.json();
+const hostingUrl = `https://vercel.com/new/import?s=https://github.com/${repoData.repo}`;
+status.innerHTML = `Your project is ready. <button onclick="window.open('${hostingUrl}','_blank')" style="background:var(--purple-bright);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-family:Syne,sans-serif;font-size:12px;font-weight:700;cursor:pointer;margin-left:8px;">Set Up Hosting</button>`;
 
-if (vercelData.success) {
-  status.textContent = `Done. "${plan.display_name}" is live at ${vercelData.url}`;
-} else {
-  status.textContent = `Repo created but Vercel connection failed: ${vercelData.error}`;
-}
 
     if (currentView === 'dashboard') loadThreads();
 
