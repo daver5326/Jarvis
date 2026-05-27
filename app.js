@@ -635,6 +635,12 @@ function detectUpdateIntent(text) {
   return triggers.some(t => lower.includes(t));
 }
 
+function detectNewProjectIntent(text) {
+  const triggers = ['new project', 'new app', 'new repo', 'create a project', 'create an app', 'start a project', 'start an app', 'launch a project', 'launch an app', 'scaffold', 'new external'];
+  const lower = text.toLowerCase();
+  return triggers.some(t => lower.includes(t));
+}
+
 // ─── THREAD UPDATE ────────────────────────────────────────────────────────────
 
 async function handleThreadUpdate(text, threads) {
@@ -796,6 +802,125 @@ No markdown, no explanation, just JSON.`,
 
   } catch(e) {
     status.textContent = 'Build failed: ' + e.message;
+  }
+}
+
+// ─── NEW EXTERNAL PROJECT ─────────────────────────────────────────────────────
+
+async function handleNewProjectRequest(text) {
+  const msgContainer = currentView === 'dashboard'
+    ? document.getElementById('dashboard-messages')
+    : document.getElementById('chat-messages');
+
+  const status = document.createElement('div');
+  status.className = 'message assistant';
+  status.textContent = 'Planning the new project...';
+  msgContainer.appendChild(status);
+  msgContainer.scrollTop = 999999;
+
+  try {
+    // Ask Claude to extract project name and description
+    const planRes = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        system: `You are Jarvis. David wants to create a new external project with its own GitHub repo.
+Return ONLY a JSON object:
+{
+  "repo_name": "kebab-case-repo-name",
+  "display_name": "Human Readable Name",
+  "description": "One sentence describing the project.",
+  "confirmation": "One sentence telling David what you are about to create."
+}
+No markdown, no explanation, just JSON.`,
+        messages: [{ role: 'user', content: text }]
+      })
+    });
+
+    const planData = await planRes.json();
+    const raw = planData.content[0].text.trim().replace(/```json|```/g, '');
+    const plan = JSON.parse(raw);
+
+    status.textContent = plan.confirmation;
+
+    // Create the GitHub repo
+    const repoRes = await fetch('/api/create-repo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: plan.repo_name, description: plan.description })
+    });
+    const repoData = await repoRes.json();
+    if (!repoData.success) throw new Error('Repo creation failed: ' + repoData.error);
+
+    status.textContent = `Repo created. Scaffolding files...`;
+
+    // Scaffold basic files
+    const scaffoldRes = await fetch('/api/scaffold', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        repo: repoData.repo,
+        files: [
+          {
+            path: 'index.html',
+            content: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${plan.display_name}</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>${plan.display_name}</h1>
+  <script src="app.js"></script>
+</body>
+</html>`
+          },
+          {
+            path: 'style.css',
+            content: `* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: sans-serif; background: #0a0a0f; color: #fff; padding: 20px; }`
+          },
+          {
+            path: 'app.js',
+            content: `// ${plan.display_name}
+// Created by Jarvis on ${new Date().toLocaleDateString()}
+console.log('${plan.display_name} ready');`
+          }
+        ]
+      })
+    });
+    const scaffoldData = await scaffoldRes.json();
+    if (!scaffoldData.success) throw new Error('Scaffold failed: ' + scaffoldData.error);
+
+    // Create or update the Jarvis thread with github_repo linked
+    const threadName = plan.display_name;
+    let threadId = currentThread?.id || null;
+
+    if (threadId) {
+      await db.from('Threads').update({
+        github_repo: repoData.repo,
+        'Next step': 'Connect repo to Vercel and start building'
+      }).eq('id', threadId);
+      currentThread.github_repo = repoData.repo;
+    } else {
+      const { data: newThread } = await db.from('Threads').insert([{
+        'Thread name': threadName,
+        'Goal': plan.description,
+        'Status': 'Active',
+        'platform': 'Jarvis',
+        github_repo: repoData.repo,
+        'Next step': 'Connect repo to Vercel and start building'
+      }]).select().single();
+      if (newThread) threadId = newThread.id;
+    }
+
+    status.textContent = `Done. "${plan.display_name}" repo is live at github.com/${repoData.repo}. Next: connect it to Vercel to deploy.`;
+    if (currentView === 'dashboard') loadThreads();
+
+  } catch(e) {
+    status.textContent = 'Project creation failed: ' + e.message;
   }
 }
 
@@ -965,6 +1090,12 @@ async function sendMessage(inputId) {
       return;
     }
 
+    if (detectNewProjectIntent(text)) {
+      showDashboardMessage('user', text);
+      handleNewProjectRequest(text);
+      return;
+    }
+
     if (detectBuildIntent(text)) {
       showDashboardMessage('user', text);
       handleBuildRequest(text);
@@ -1018,6 +1149,12 @@ async function sendMessage(inputId) {
   if (detectSelfModifyIntent(text)) {
     addMessage('user', text);
     handleSelfModifyRequest(text);
+    return;
+  }
+
+  if (detectNewProjectIntent(text)) {
+    addMessage('user', text);
+    handleNewProjectRequest(text);
     return;
   }
 
