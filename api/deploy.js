@@ -6,7 +6,8 @@ export default async function handler(req, res) {
   const token = process.env.GITHUB_TOKEN;
   const repo = process.env.GITHUB_REPO;
   const branch = process.env.GITHUB_BRANCH || 'main';
-  const filePath = 'app.js';
+  const filePath = req.body.file || 'app.js';
+
   const apiBase = `https://api.github.com/repos/${repo}/contents/${filePath}`;
 
   const headers = {
