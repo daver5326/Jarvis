@@ -836,11 +836,9 @@ Return ONLY a JSON object with this structure:
   "replace": "the new string to replace it with"
 }
 Rules:
-- Think first about what behavior the user wants, then find the right code to change
-- "find" must be copied character-for-character from the provided code — no paraphrasing
-- Keep "find" to 1-3 lines, just enough to be unique
-- No markdown, no explanation, ONLY the JSON object`,
-
+- "find" must be an exact unique substring from the current code
+- "replace" is what it becomes after the change
+- Keep find/replace as short as possible — just the changed portion
 - No markdown, no explanation, ONLY the JSON object`,
         messages: [{
           role: 'user',
