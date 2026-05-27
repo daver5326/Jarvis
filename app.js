@@ -1287,15 +1287,36 @@ async function saveEditThread() {
 
 async function deleteThread() {
   if (!currentThread) return;
-  if (!confirm('Delete "' + currentThread['Thread name'] + '"? Cannot be undone.')) return;
-  const { error } = await db.from('Threads').delete().eq('id', currentThread.id);
-  if (error) alert('Error: ' + error.message);
-  else {
-    document.getElementById('edit-thread-view').style.display = 'none';
-    document.getElementById('dashboard').style.display = 'block';
-    currentView = 'dashboard'; currentThread = null; loadThreads();
-  }
+  const editView = document.getElementById('edit-thread-view');
+  const confirmDiv = document.createElement('div');
+  confirmDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;padding:24px;';
+  confirmDiv.innerHTML = `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;max-width:320px;width:100%;">
+      <div style="font-family:Syne,sans-serif;font-size:16px;font-weight:700;color:var(--text-primary);margin-bottom:8px;">Delete "${currentThread['Thread name']}"?</div>
+      <div style="font-size:14px;color:var(--text-secondary);margin-bottom:20px;">This cannot be undone.</div>
+      <div style="display:flex;gap:8px;">
+        <button id="confirm-delete-btn" style="flex:1;background:#ef4444;color:#fff;border:none;border-radius:8px;padding:10px;font-family:Syne,sans-serif;font-size:13px;font-weight:700;cursor:pointer;">Delete</button>
+        <button id="cancel-delete-btn" style="flex:1;background:var(--white-08);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;padding:10px;font-family:Syne,sans-serif;font-size:13px;cursor:pointer;">Cancel</button>
+      </div>
+    </div>`;
+  document.body.appendChild(confirmDiv);
+
+  document.getElementById('cancel-delete-btn').onclick = () => confirmDiv.remove();
+  document.getElementById('confirm-delete-btn').onclick = async () => {
+    confirmDiv.remove();
+    const { error } = await db.from('Threads').delete().eq('id', currentThread.id);
+    if (error) {
+      alert('Error: ' + error.message);
+    } else {
+      document.getElementById('edit-thread-view').style.display = 'none';
+      document.getElementById('dashboard').style.display = 'block';
+      currentView = 'dashboard';
+      currentThread = null;
+      loadThreads();
+    }
+  };
 }
+
 
 async function saveNewThread() {
   const name = document.getElementById('nt-name').value.trim();
